@@ -334,9 +334,25 @@ def handle_record_recent(event, user_id: str):
         emoji = CATEGORY_EMOJI_RECORD.get(r["category"], "")
         t = "+" if r["type"] == "收入" else "-"
         d = r["tx_date"].strftime("%m/%d") if r["tx_date"] else r["created_at"].strftime("%m/%d")
-        lines.append(f"{d} {emoji} {t}${r['amount']:,} {r['description']}")
+        lines.append(f"#{r['id']} {d} {emoji} {t}${r['amount']:,} {r['description']}")
+    lines.append("\n輸入「刪 編號」可刪除記錄")
 
     reply(event, "\n".join(lines))
+
+
+def handle_record_delete(event, user_id: str, tx_id: int):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM transactions WHERE id = %s AND user_id = %s", (tx_id, user_id))
+    affected = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    if affected:
+        reply(event, f"已刪除記錄 #{tx_id}")
+    else:
+        reply(event, f"找不到記錄 #{tx_id}")
 
 # ── Help messages ──
 
@@ -355,7 +371,8 @@ HELP_RECORD = (
     "直接輸入 AI 自動記帳\n"
     "帳戶 → 查看收支總覽\n"
     "本月 → 查看本月報表\n"
-    "明細 → 查看最近 10 筆"
+    "明細 → 查看最近 10 筆\n"
+    "刪 [id] → 刪除記錄"
 )
 
 # ── Main routing ──
@@ -426,6 +443,12 @@ def handle_message(event):
             handle_record_monthly(event, user_id)
         elif text in ("明細", "紀錄", "最近") or "最近" in text and "筆" in text:
             handle_record_recent(event, user_id)
+        elif text.startswith("刪"):
+            try:
+                tx_id = int(text.replace("刪", "").strip())
+                handle_record_delete(event, user_id, tx_id)
+            except ValueError:
+                reply(event, "格式錯誤，請輸入：刪 [編號]")
         else:
             handle_record_natural(event, user_id, text)
         return
