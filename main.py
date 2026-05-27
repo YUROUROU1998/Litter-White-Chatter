@@ -11,13 +11,16 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from linebot.v3.exceptions import InvalidSignatureError
 
 from db import get_conn, get_cursor, init_db
-from agent import agent_parse_todos, agent_parse_transaction
+from agent import agent_parse_todos, agent_parse_transaction, agent_chat
 from datetime import date, timedelta
 
 app = Flask(__name__)
 
 config = Configuration(access_token=os.environ["LINE_CHANNEL_ACCESS_TOKEN"])
 handler = WebhookHandler(os.environ["LINE_CHANNEL_SECRET"])
+
+# ── Chat mode: in-memory conversation history (cleared on mode switch) ──
+chat_histories = {}
 
 # ── Emoji maps ──
 
@@ -438,6 +441,14 @@ HELP_RECORD = (
     "刪 [id] → 刪除記錄"
 )
 
+HELP_CHAT = (
+    "Chat 模式：\n\n"
+    "直接輸入任何問題，AI 為你解答\n"
+    "支援多輪對話，記得上下文\n"
+    "需要即時資訊時 AI 會自動搜尋\n"
+    "切換模式時自動清空對話紀錄"
+)
+
 # ── Main routing ──
 
 @app.route("/callback", methods=["POST"])
@@ -460,18 +471,31 @@ def handle_message(event):
     # ── Global commands ──
     if text == "#note":
         set_user_mode(user_id, "note")
+        chat_histories.pop(user_id, None)
         reply(event, f"已切換至 Note 模式\n\n{HELP_NOTE}")
         return
     if text == "#record":
         set_user_mode(user_id, "record")
+        chat_histories.pop(user_id, None)
         reply(event, f"已切換至 Record 模式\n\n{HELP_RECORD}")
         return
+    if text in ("#chat", "#聊天"):
+        set_user_mode(user_id, "chat")
+        chat_histories.pop(user_id, None)
+        reply(event, f"已切換至 Chat 模式\n\n{HELP_CHAT}")
+        return
     if text == "說明":
-        reply(event, HELP_NOTE if mode == "note" else HELP_RECORD)
+        help_map = {"note": HELP_NOTE, "record": HELP_RECORD, "chat": HELP_CHAT}
+        reply(event, help_map.get(mode, HELP_CHAT))
         return
     if text == "模式":
-        mode_name = "Note（待辦清單）" if mode == "note" else "Record（記帳）"
-        reply(event, f"目前模式：{mode_name}\n\n輸入 #note 或 #record 切換模式")
+        mode_names = {
+            "note": "Note（待辦清單）",
+            "record": "Record（記帳）",
+            "chat": "Chat（AI 聊天）"
+        }
+        mode_name = mode_names.get(mode, mode)
+        reply(event, f"目前模式：{mode_name}\n\n輸入 #note / #record / #chat 切換模式")
         return
 
     # ── Exact keyword shortcuts ──
@@ -500,9 +524,30 @@ def handle_message(event):
     # ── Everything else → AI agent ──
     if mode == "note":
         handle_note_natural(event, user_id, text)
-    else:
+    elif mode == "record":
         handle_record_natural(event, user_id, text)
+    else:
+        handle_chat_message(event, user_id, text)
 
+
+# ── Chat mode handler ──
+
+MAX_CHAT_HISTORY = 20
+
+def handle_chat_message(event, user_id: str, text: str):
+    if user_id not in chat_histories:
+        chat_histories[user_id] = []
+
+    history = chat_histories[user_id]
+    response = agent_chat(text, history)
+
+    history.append({"role": "user", "content": text})
+    history.append({"role": "assistant", "content": response})
+
+    if len(history) > MAX_CHAT_HISTORY:
+        chat_histories[user_id] = history[-MAX_CHAT_HISTORY:]
+
+    reply(event, response)
 
 # ── App startup ──
 

@@ -2,6 +2,7 @@ import os
 import json
 from datetime import date
 from openai import OpenAI
+from duckduckgo_search import DDGS
 
 client = OpenAI(
     api_key=os.environ["DEEPSEEK_API_KEY"],
@@ -85,3 +86,99 @@ tx_date：交易發生日期，若無明確日期則填 {today}
         return json.loads(content)
     except (json.JSONDecodeError, IndexError, AttributeError):
         return None
+
+
+# ── Chat mode: free conversation with tool calling ──
+
+CHAT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "搜尋網路即時資訊，例如天氣、新聞、股價、最新消息等",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "搜尋關鍵字"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    }
+]
+
+
+def _execute_tool(name: str, args: dict) -> str:
+    if name == "web_search":
+        try:
+            results = DDGS().text(args["query"], max_results=3)
+            if results:
+                return "\n".join(f"- {r['title']}: {r['body']}" for r in results)
+            return "沒有找到相關結果"
+        except Exception:
+            return "搜尋暫時無法使用"
+    return "未知工具"
+
+
+def agent_chat(user_text: str, history: list) -> str:
+    today = date.today().isoformat()
+    messages = [
+        {"role": "system", "content": (
+            f"你是一個友善的智慧助理。今天日期是 {today}。"
+            "你可以回答各種問題，包括生活、料理、旅遊、知識等。"
+            "如果需要即時資訊（天氣、新聞、股價等），請使用搜尋工具。"
+            "如果是常識或知識性問題，直接回答即可，不需要搜尋。"
+            "回答請使用繁體中文，保持簡潔友善。"
+        )}
+    ]
+    messages.extend(history)
+    messages.append({"role": "user", "content": user_text})
+
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL,
+            max_tokens=1000,
+            messages=messages,
+            tools=CHAT_TOOLS,
+            temperature=0.7
+        )
+        msg = resp.choices[0].message
+
+        if msg.tool_calls:
+            assistant_msg = {"role": "assistant", "content": msg.content or ""}
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                }
+                for tc in msg.tool_calls
+            ]
+            messages.append(assistant_msg)
+
+            for tc in msg.tool_calls:
+                args = json.loads(tc.function.arguments)
+                result = _execute_tool(tc.function.name, args)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result
+                })
+
+            resp = client.chat.completions.create(
+                model=MODEL,
+                max_tokens=1000,
+                messages=messages,
+                temperature=0.7
+            )
+            msg = resp.choices[0].message
+
+        return msg.content or "抱歉，我無法回答這個問題"
+    except Exception:
+        return "AI 暫時無法回應，請稍後再試"
