@@ -75,29 +75,69 @@ def reply(event, text: str):
 # ── Note mode handlers ──
 
 def handle_note_natural(event, user_id: str, text: str):
-    todos = agent_parse_todos(text)
-    if todos is None:
+    result = agent_parse_todos(text)
+    if result is None:
         reply(event, "AI 解析失敗，請重試")
         return
 
-    conn = get_conn()
-    cur = conn.cursor()
-    lines = ["已新增待辦：\n"]
-    for t in todos:
-        cur.execute(
-            "INSERT INTO todos (user_id, title, category, priority, due_date) "
-            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (user_id, t["title"], t["category"], t["priority"], t.get("due_date", date.today().isoformat()))
-        )
-        tid = cur.fetchone()[0]
-        p = PRIORITY_EMOJI.get(t["priority"], "")
-        c = CATEGORY_EMOJI_NOTE.get(t["category"], "")
-        lines.append(f"{c}{p} #{tid} {t['title']}")
-        lines.append(f"   {t.get('due_date', '今天')}｜{t['category']}｜{t['priority']}")
-    conn.commit()
-    cur.close()
-    conn.close()
-    reply(event, "\n".join(lines))
+    action = result.get("action", "unknown")
+
+    if action == "add":
+        conn = get_conn()
+        cur = conn.cursor()
+        lines = ["已新增待辦：\n"]
+        for t in result.get("items", []):
+            cur.execute(
+                "INSERT INTO todos (user_id, title, category, priority, due_date) "
+                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (user_id, t["title"], t["category"], t["priority"], t.get("due_date", date.today().isoformat()))
+            )
+            tid = cur.fetchone()[0]
+            p = PRIORITY_EMOJI.get(t["priority"], "")
+            c = CATEGORY_EMOJI_NOTE.get(t["category"], "")
+            lines.append(f"{c}{p} #{tid} {t['title']}")
+            lines.append(f"   {t.get('due_date', '今天')}｜{t['category']}｜{t['priority']}")
+        conn.commit()
+        cur.close()
+        conn.close()
+        reply(event, "\n".join(lines))
+
+    elif action == "done":
+        ids = result.get("ids", [])
+        conn = get_conn()
+        cur = conn.cursor()
+        done_ids = []
+        for i in ids:
+            cur.execute("UPDATE todos SET done = TRUE WHERE id = %s AND user_id = %s", (i, user_id))
+            if cur.rowcount:
+                done_ids.append(str(i))
+        conn.commit()
+        cur.close()
+        conn.close()
+        if done_ids:
+            reply(event, f"已完成 #{', #'.join(done_ids)}")
+        else:
+            reply(event, "找不到對應的待辦")
+
+    elif action == "delete":
+        ids = result.get("ids", [])
+        conn = get_conn()
+        cur = conn.cursor()
+        deleted_ids = []
+        for i in ids:
+            cur.execute("DELETE FROM todos WHERE id = %s AND user_id = %s", (i, user_id))
+            if cur.rowcount:
+                deleted_ids.append(str(i))
+        conn.commit()
+        cur.close()
+        conn.close()
+        if deleted_ids:
+            reply(event, f"已刪除 #{', #'.join(deleted_ids)}")
+        else:
+            reply(event, "找不到對應的待辦")
+
+    else:
+        reply(event, "無法辨識，請輸入待辦內容或輸入「說明」查看指令")
 
 
 def handle_note_today(event, user_id: str):
@@ -204,33 +244,56 @@ def handle_note_clear_done(event, user_id: str):
 # ── Record mode handlers ──
 
 def handle_record_natural(event, user_id: str, text: str):
-    tx = agent_parse_transaction(text)
-    if tx is None:
-        reply(event, "無法辨識為一筆交易，請輸入包含金額的消費或收入\n\n範例：午餐吃拉麵250元\n輸入「說明」查看所有指令")
+    result = agent_parse_transaction(text)
+    if result is None:
+        reply(event, "AI 解析失敗，請重試")
         return
 
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO transactions (user_id, type, category, amount, description, tx_date) "
-        "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-        (user_id, tx["type"], tx["category"], tx["amount"], tx["description"],
-         tx.get("tx_date", date.today().isoformat()))
-    )
-    tid = cur.fetchone()[0]
-    conn.commit()
-    cur.close()
-    conn.close()
+    action = result.get("action", "unknown")
 
-    emoji = CATEGORY_EMOJI_RECORD.get(tx["category"], "")
-    tx_date = tx.get("tx_date", date.today().isoformat())
-    reply(event, (
-        f"已記錄 #{tid}\n\n"
-        f"{emoji} {tx['category']}｜{tx['type']}\n"
-        f"${tx['amount']:,}\n"
-        f"{tx_date}\n"
-        f"{tx['description']}"
-    ))
+    if action == "add":
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO transactions (user_id, type, category, amount, description, tx_date) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (user_id, result["type"], result["category"], result["amount"], result["description"],
+             result.get("tx_date", date.today().isoformat()))
+        )
+        tid = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        emoji = CATEGORY_EMOJI_RECORD.get(result["category"], "")
+        tx_date = result.get("tx_date", date.today().isoformat())
+        reply(event, (
+            f"已記錄 #{tid}\n\n"
+            f"{emoji} {result['category']}｜{result['type']}\n"
+            f"${result['amount']:,}\n"
+            f"{tx_date}\n"
+            f"{result['description']}"
+        ))
+
+    elif action == "delete":
+        ids = result.get("ids", [])
+        conn = get_conn()
+        cur = conn.cursor()
+        deleted_ids = []
+        for i in ids:
+            cur.execute("DELETE FROM transactions WHERE id = %s AND user_id = %s", (i, user_id))
+            if cur.rowcount:
+                deleted_ids.append(str(i))
+        conn.commit()
+        cur.close()
+        conn.close()
+        if deleted_ids:
+            reply(event, f"已刪除 #{', #'.join(deleted_ids)}")
+        else:
+            reply(event, "找不到對應的記錄")
+
+    else:
+        reply(event, "無法辨識，請輸入消費或收入內容，或輸入「說明」查看指令")
 
 
 def handle_record_balance(event, user_id: str):
@@ -411,47 +474,34 @@ def handle_message(event):
         reply(event, f"目前模式：{mode_name}\n\n輸入 #note 或 #record 切換模式")
         return
 
-    # ── Shared: delete ──
-    if text.startswith("刪"):
-        try:
-            item_id = int(text.replace("刪除", "").replace("刪", "").strip())
-            if mode == "note":
-                handle_note_delete(event, user_id, item_id)
-            else:
-                handle_record_delete(event, user_id, item_id)
-        except ValueError:
-            reply(event, "格式錯誤，請輸入：刪 [編號]")
-        return
-
-    # ── Note mode ──
+    # ── Exact keyword shortcuts ──
     if mode == "note":
         if text in ("今天", "今日"):
             handle_note_today(event, user_id)
-        elif text in ("本週", "這週"):
+            return
+        if text in ("本週", "這週"):
             handle_note_week(event, user_id)
-        elif text == "清除完成":
+            return
+        if text == "清除完成":
             handle_note_clear_done(event, user_id)
-        elif text.startswith("完成"):
-            try:
-                todo_id = int(text.replace("完成", "").strip())
-                handle_note_done(event, user_id, todo_id)
-            except ValueError:
-                reply(event, "格式錯誤，請輸入：完成 [編號]")
-        else:
-            handle_note_natural(event, user_id, text)
-        return
+            return
 
-    # ── Record mode ──
     if mode == "record":
         if text in ("帳戶", "餘額", "總覽"):
             handle_record_balance(event, user_id)
-        elif text in ("本月", "月報", "本月報表"):
+            return
+        if text in ("本月", "月報", "本月報表"):
             handle_record_monthly(event, user_id)
-        elif text in ("明細", "紀錄", "最近") or "最近" in text and "筆" in text:
+            return
+        if text in ("明細", "紀錄", "最近") or ("最近" in text and "筆" in text):
             handle_record_recent(event, user_id)
-        else:
-            handle_record_natural(event, user_id, text)
-        return
+            return
+
+    # ── Everything else → AI agent ──
+    if mode == "note":
+        handle_note_natural(event, user_id, text)
+    else:
+        handle_record_natural(event, user_id, text)
 
 
 # ── App startup ──

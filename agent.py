@@ -10,23 +10,30 @@ client = OpenAI(
 
 MODEL = "deepseek-chat"
 
-def agent_parse_todos(user_text: str) -> list | None:
+def agent_parse_todos(user_text: str) -> dict | None:
     today = date.today().isoformat()
     resp = client.chat.completions.create(
         model=MODEL,
         max_tokens=1000,
         messages=[
-            {"role": "system", "content": f"""你是待辦事項解析助理。今天日期是 {today}。
-將用戶的自然語言輸入拆解為一或多筆待辦事項，回傳 JSON Array。
+            {"role": "system", "content": f"""你是待辦事項助理。今天日期是 {today}。
+根據用戶輸入，判斷意圖並回傳 JSON。
 
-每筆格式：
-{{ "title": "動詞開頭的繁體中文標題", "category": "分類", "priority": "優先度", "due_date": "YYYY-MM-DD" }}
+1. 如果是新增待辦，回傳：
+{{ "action": "add", "items": [{{ "title": "動詞開頭繁體中文", "category": "分類", "priority": "優先度", "due_date": "YYYY-MM-DD" }}] }}
+
+2. 如果是標記完成，回傳：
+{{ "action": "done", "ids": [3, 5] }}
+
+3. 如果是刪除待辦，回傳：
+{{ "action": "delete", "ids": [4, 5] }}
+
+4. 如果無法判斷（閒聊、無關內容），回傳：
+{{ "action": "unknown" }}
 
 category 值域：生活 / 工作 / 健康 / 購物 / 娛樂 / 其他
 priority 值域：高 / 中 / 低
 due_date：若無明確日期則填 {today}
-
-重要：如果用戶的輸入不是待辦事項（例如查詢指令、閒聊、問題），請回傳 {{"error": true}}。
 
 只回傳 JSON，不要任何其他文字。"""},
             {"role": "user", "content": user_text}
@@ -37,10 +44,7 @@ due_date：若無明確日期則填 {today}
         content = resp.choices[0].message.content.strip()
         if content.startswith("```"):
             content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        result = json.loads(content)
-        if isinstance(result, dict) and result.get("error"):
-            return None
-        return result
+        return json.loads(content)
     except (json.JSONDecodeError, IndexError, AttributeError):
         return None
 
@@ -51,19 +55,23 @@ def agent_parse_transaction(user_text: str) -> dict | None:
         model=MODEL,
         max_tokens=1000,
         messages=[
-            {"role": "system", "content": f"""你是記帳解析助理。今天日期是 {today}。
-將用戶的自然語言輸入解析為一筆交易記錄，回傳 JSON Object。
+            {"role": "system", "content": f"""你是記帳助理。今天日期是 {today}。
+根據用戶輸入，判斷意圖並回傳 JSON。
 
-格式：
-{{ "type": "收入或支出", "category": "分類", "amount": 金額正整數, "description": "簡短描述", "tx_date": "YYYY-MM-DD" }}
+1. 如果是記錄一筆交易，回傳：
+{{ "action": "add", "type": "收入或支出", "category": "分類", "amount": 金額正整數, "description": "簡短描述", "tx_date": "YYYY-MM-DD" }}
+
+2. 如果是刪除記錄，回傳：
+{{ "action": "delete", "ids": [4, 5] }}
+
+3. 如果無法判斷（閒聊、查詢、無關內容），回傳：
+{{ "action": "unknown" }}
 
 type 值域：收入 / 支出
 category 值域：餐飲 / 交通 / 娛樂 / 購物 / 醫療 / 薪資 / 獎金 / 其他
 amount：正整數（無論收支都填正數）
 tx_date：交易發生日期，若無明確日期則填 {today}
-
-重要：如果用戶的輸入不是一筆消費或收入（例如查詢指令、閒聊、問題），請回傳 {{"error": true}}。
-只有明確包含金額或消費/收入行為的輸入才解析為交易。
+只有明確包含金額或消費/收入行為的輸入才判斷為交易。
 
 只回傳 JSON，不要任何其他文字。"""},
             {"role": "user", "content": user_text}
@@ -74,9 +82,6 @@ tx_date：交易發生日期，若無明確日期則填 {today}
         content = resp.choices[0].message.content.strip()
         if content.startswith("```"):
             content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        result = json.loads(content)
-        if result.get("error"):
-            return None
-        return result
+        return json.loads(content)
     except (json.JSONDecodeError, IndexError, AttributeError):
         return None
