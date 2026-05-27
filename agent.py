@@ -145,7 +145,8 @@ def _execute_tool(name: str, args: dict) -> str:
             if results:
                 return "\n".join(f"- {r['title']}: {r['body']}" for r in results)
             return "沒有找到相關結果"
-        except Exception:
+        except Exception as e:
+            print(f"[web_search error] query={args.get('query')}, error={e}")
             return "搜尋暫時無法使用"
     return "未知工具"
 
@@ -156,18 +157,41 @@ def _parse_dsml_tool_calls(content: str) -> list[dict] | None:
         return None
     calls = []
     for m in re.finditer(
-        r'<\|?\|?DSML\|?\|?invoke\s+name="(\w+)">(.*?)</\|?\|?DSML\|?\|?invoke>',
+        r'<[|\s]*DSML[|\s]*invoke\s+name="(\w+)"[^>]*>(.*?)</[|\s]*DSML[|\s]*invoke>',
         content, re.DOTALL
     ):
         name = m.group(1)
         params = {}
         for pm in re.finditer(
-            r'<\|?\|?DSML\|?\|?parameter\s+name="(\w+)"[^>]*>(.*?)</\|?\|?DSML\|?\|?parameter>',
+            r'<[|\s]*DSML[|\s]*parameter\s+name="(\w+)"[^>]*>(.*?)</[|\s]*DSML[|\s]*parameter>',
             m.group(2), re.DOTALL
         ):
             params[pm.group(1)] = pm.group(2).strip()
         calls.append({"name": name, "arguments": params})
     return calls if calls else None
+
+
+def _strip_dsml(content: str) -> str:
+    """Remove any DSML markup from response content."""
+    if not content or "DSML" not in content:
+        return content or ""
+    cleaned = re.sub(r'<[|\s]*/?[|\s]*DSML[|\s]*[^>]*>', '', content).strip()
+    return cleaned if cleaned else ""
+
+
+def _do_search_and_answer(messages: list, search_results: str) -> str:
+    """Given search results, ask LLM to generate a final answer."""
+    messages.append({"role": "assistant", "content": "我來搜尋一下。"})
+    messages.append({"role": "user", "content":
+        f"搜尋結果：\n{search_results}\n\n請根據以上結果回答我之前的問題。"})
+    resp = client.chat.completions.create(
+        model=MODEL,
+        max_tokens=1000,
+        messages=messages,
+        temperature=0.7
+    )
+    answer = resp.choices[0].message.content or ""
+    return _strip_dsml(answer)
 
 
 def agent_chat(user_text: str, history: list) -> str:
@@ -195,7 +219,7 @@ def agent_chat(user_text: str, history: list) -> str:
         )
         msg = resp.choices[0].message
 
-        # ── Standard tool_calls handling ──
+        # ── Path A: Standard tool_calls ──
         if msg.tool_calls:
             assistant_msg = {"role": "assistant", "content": msg.content or ""}
             assistant_msg["tool_calls"] = [
@@ -220,16 +244,17 @@ def agent_chat(user_text: str, history: list) -> str:
                     "content": result
                 })
 
-            resp = client.chat.completions.create(
+            resp2 = client.chat.completions.create(
                 model=MODEL,
                 max_tokens=1000,
                 messages=messages,
                 temperature=0.7
             )
-            msg = resp.choices[0].message
+            answer = resp2.choices[0].message.content or ""
+            return _strip_dsml(answer) or "抱歉，我無法回答這個問題"
 
-        # ── Fallback: DSML text-format tool calls ──
-        elif msg.content and "DSML" in msg.content:
+        # ── Path B: DSML text-format tool calls (fallback) ──
+        if msg.content and "DSML" in msg.content:
             dsml_calls = _parse_dsml_tool_calls(msg.content)
             if dsml_calls:
                 results = []
@@ -237,17 +262,17 @@ def agent_chat(user_text: str, history: list) -> str:
                     result = _execute_tool(call["name"], call["arguments"])
                     results.append(result)
                 combined = "\n".join(results)
-                messages.append({"role": "assistant", "content": "我來搜尋一下。"})
-                messages.append({"role": "user", "content":
-                    f"搜尋結果：\n{combined}\n\n請根據以上結果回答我之前的問題。"})
-                resp = client.chat.completions.create(
-                    model=MODEL,
-                    max_tokens=1000,
-                    messages=messages,
-                    temperature=0.7
-                )
-                msg = resp.choices[0].message
+                answer = _do_search_and_answer(messages, combined)
+                return answer or "抱歉，我無法回答這個問題"
+            # DSML detected but parsing failed — direct search as fallback
+            print(f"[DSML parse failed] content={msg.content[:200]}")
+            search_result = _execute_tool("web_search", {"query": user_text})
+            answer = _do_search_and_answer(messages, search_result)
+            return answer or "抱歉，我無法回答這個問題"
 
-        return msg.content or "抱歉，我無法回答這個問題"
-    except Exception:
+        # ── Path C: Normal text response (no tool call) ──
+        return _strip_dsml(msg.content) or "抱歉，我無法回答這個問題"
+
+    except Exception as e:
+        print(f"[agent_chat error] user_text={user_text[:50]}, error={e}")
         return "AI 暫時無法回應，請稍後再試"
