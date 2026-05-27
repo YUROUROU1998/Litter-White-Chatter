@@ -77,12 +77,12 @@ def reply(event, text: str):
 def handle_note_natural(event, user_id: str, text: str):
     todos = agent_parse_todos(text)
     if todos is None:
-        reply(event, "⚠️ AI 解析失敗，請重試")
+        reply(event, "AI 解析失敗，請重試")
         return
 
     conn = get_conn()
     cur = conn.cursor()
-    lines = ["📝 已新增待辦：\n"]
+    lines = ["已新增待辦：\n"]
     for t in todos:
         cur.execute(
             "INSERT INTO todos (user_id, title, category, priority, due_date) "
@@ -91,9 +91,9 @@ def handle_note_natural(event, user_id: str, text: str):
         )
         tid = cur.fetchone()[0]
         p = PRIORITY_EMOJI.get(t["priority"], "")
-        c = CATEGORY_EMOJI_NOTE.get(t["category"], "📌")
-        lines.append(f"  {c}{p} #{tid} {t['title']}")
-        lines.append(f"     📅 {t.get('due_date', '今天')}｜{t['category']}｜{t['priority']}")
+        c = CATEGORY_EMOJI_NOTE.get(t["category"], "")
+        lines.append(f"{c}{p} #{tid} {t['title']}")
+        lines.append(f"   {t.get('due_date', '今天')}｜{t['category']}｜{t['priority']}")
     conn.commit()
     cur.close()
     conn.close()
@@ -112,24 +112,24 @@ def handle_note_today(event, user_id: str):
     conn.close()
 
     if not rows:
-        reply(event, "📭 今天沒有待辦事項")
+        reply(event, "今天沒有待辦事項")
         return
 
     undone = [r for r in rows if not r["done"]]
     done = [r for r in rows if r["done"]]
 
-    lines = [f"📋 今日待辦（{date.today()}）\n"]
+    lines = [f"今日待辦（{date.today()}）\n"]
     if undone:
         lines.append("── 未完成 ──")
         for r in undone:
             p = PRIORITY_EMOJI.get(r["priority"], "")
-            c = CATEGORY_EMOJI_NOTE.get(r["category"], "📌")
-            lines.append(f"  {c}{p} #{r['id']} {r['title']}")
+            c = CATEGORY_EMOJI_NOTE.get(r["category"], "")
+            lines.append(f"{c}{p} #{r['id']} {r['title']}")
     if done:
-        lines.append("\n── 已完成 ✅ ──")
+        lines.append("\n── 已完成 ──")
         for r in done:
-            c = CATEGORY_EMOJI_NOTE.get(r["category"], "📌")
-            lines.append(f"  {c} #{r['id']} ✅ {r['title']}")
+            c = CATEGORY_EMOJI_NOTE.get(r["category"], "")
+            lines.append(f"{c} #{r['id']} {r['title']}")
 
     reply(event, "\n".join(lines))
 
@@ -137,7 +137,6 @@ def handle_note_today(event, user_id: str):
 def handle_note_week(event, user_id: str):
     conn = get_conn()
     cur = get_cursor(conn)
-    end = date.today() + timedelta(days=7)
     cur.execute(
         "SELECT * FROM todos WHERE user_id = %s AND done = FALSE AND due_date >= %s "
         "ORDER BY due_date, priority",
@@ -148,15 +147,15 @@ def handle_note_week(event, user_id: str):
     conn.close()
 
     if not rows:
-        reply(event, "🎉 近期沒有未完成的待辦！")
+        reply(event, "近期沒有未完成的待辦")
         return
 
-    lines = ["📋 近期未完成待辦\n"]
+    lines = ["近期未完成待辦\n"]
     for r in rows:
         p = PRIORITY_EMOJI.get(r["priority"], "")
-        c = CATEGORY_EMOJI_NOTE.get(r["category"], "📌")
-        lines.append(f"  {c}{p} #{r['id']} {r['title']}")
-        lines.append(f"     📅 {r['due_date']}")
+        c = CATEGORY_EMOJI_NOTE.get(r["category"], "")
+        lines.append(f"{c}{p} #{r['id']} {r['title']}")
+        lines.append(f"   {r['due_date']}")
     reply(event, "\n".join(lines))
 
 
@@ -172,9 +171,9 @@ def handle_note_done(event, user_id: str, todo_id: int):
     conn.close()
 
     if affected:
-        reply(event, f"✅ 待辦 #{todo_id} 已完成！")
+        reply(event, f"待辦 #{todo_id} 已完成")
     else:
-        reply(event, f"⚠️ 找不到待辦 #{todo_id}")
+        reply(event, f"找不到待辦 #{todo_id}")
 
 
 def handle_note_delete(event, user_id: str, todo_id: int):
@@ -187,9 +186,9 @@ def handle_note_delete(event, user_id: str, todo_id: int):
     conn.close()
 
     if affected:
-        reply(event, f"🗑️ 已刪除待辦 #{todo_id}")
+        reply(event, f"已刪除待辦 #{todo_id}")
     else:
-        reply(event, f"⚠️ 找不到待辦 #{todo_id}")
+        reply(event, f"找不到待辦 #{todo_id}")
 
 
 def handle_note_clear_done(event, user_id: str):
@@ -200,14 +199,14 @@ def handle_note_clear_done(event, user_id: str):
     conn.commit()
     cur.close()
     conn.close()
-    reply(event, f"🧹 已清除 {count} 筆已完成待辦")
+    reply(event, f"已清除 {count} 筆已完成待辦")
 
 # ── Record mode handlers ──
 
 def handle_record_natural(event, user_id: str, text: str):
     tx = agent_parse_transaction(text)
     if tx is None:
-        reply(event, "⚠️ 無法辨識為一筆交易，請輸入包含金額的消費或收入\n\n💡 範例：午餐吃拉麵250元\n💡 輸入「說明」查看所有指令")
+        reply(event, "無法辨識為一筆交易，請輸入包含金額的消費或收入\n\n範例：午餐吃拉麵250元\n輸入「說明」查看所有指令")
         return
 
     conn = get_conn()
@@ -223,15 +222,14 @@ def handle_record_natural(event, user_id: str, text: str):
     cur.close()
     conn.close()
 
-    emoji = CATEGORY_EMOJI_RECORD.get(tx["category"], "📌")
-    type_icon = "📈" if tx["type"] == "收入" else "📉"
+    emoji = CATEGORY_EMOJI_RECORD.get(tx["category"], "")
     tx_date = tx.get("tx_date", date.today().isoformat())
     reply(event, (
-        f"{type_icon} 已記錄 #{tid}\n\n"
-        f"  {emoji} {tx['category']}｜{tx['type']}\n"
-        f"  💰 ${tx['amount']:,}\n"
-        f"  📅 {tx_date}\n"
-        f"  📝 {tx['description']}"
+        f"已記錄 #{tid}\n\n"
+        f"{emoji} {tx['category']}｜{tx['type']}\n"
+        f"${tx['amount']:,}\n"
+        f"{tx_date}\n"
+        f"{tx['description']}"
     ))
 
 
@@ -255,13 +253,13 @@ def handle_record_balance(event, user_id: str):
         else:
             expense = r["total"]
     balance = income - expense
-    b_icon = "🟢" if balance >= 0 else "🔴"
+    b_sign = "+" if balance >= 0 else ""
 
     reply(event, (
-        f"💰 帳戶總覽\n\n"
-        f"  📈 總收入：${income:,}\n"
-        f"  📉 總支出：${expense:,}\n"
-        f"  {b_icon} 結餘：${balance:,}"
+        f"帳戶總覽\n\n"
+        f"總收入：${income:,}\n"
+        f"總支出：${expense:,}\n"
+        f"結餘：{b_sign}${balance:,}"
     ))
 
 
@@ -282,7 +280,7 @@ def handle_record_monthly(event, user_id: str):
     conn.close()
 
     if not rows:
-        reply(event, "📭 本月還沒有任何記錄")
+        reply(event, "本月還沒有任何記錄")
         return
 
     income_total = 0
@@ -291,27 +289,27 @@ def handle_record_monthly(event, user_id: str):
     income_lines = []
 
     for r in rows:
-        emoji = CATEGORY_EMOJI_RECORD.get(r["category"], "📌")
+        emoji = CATEGORY_EMOJI_RECORD.get(r["category"], "")
         if r["type"] == "支出":
             expense_total += r["total"]
-            expense_lines.append(f"  {emoji} {r['category']}：${r['total']:,}")
+            expense_lines.append(f"{emoji} {r['category']}：${r['total']:,}")
         else:
             income_total += r["total"]
-            income_lines.append(f"  {emoji} {r['category']}：${r['total']:,}")
+            income_lines.append(f"{emoji} {r['category']}：${r['total']:,}")
 
     balance = income_total - expense_total
-    b_icon = "🟢" if balance >= 0 else "🔴"
+    b_sign = "+" if balance >= 0 else ""
 
-    lines = [f"📊 {today.year}/{today.month} 月報\n"]
+    lines = [f"{today.year}/{today.month} 月報\n"]
     if expense_lines:
-        lines.append("── 支出明細 ──")
+        lines.append("── 支出 ──")
         lines.extend(expense_lines)
-        lines.append(f"  小計：${expense_total:,}\n")
+        lines.append(f"小計：${expense_total:,}\n")
     if income_lines:
-        lines.append("── 收入明細 ──")
+        lines.append("── 收入 ──")
         lines.extend(income_lines)
-        lines.append(f"  小計：${income_total:,}\n")
-    lines.append(f"{b_icon} 本月結餘：${balance:,}")
+        lines.append(f"小計：${income_total:,}\n")
+    lines.append(f"本月結餘：{b_sign}${balance:,}")
 
     reply(event, "\n".join(lines))
 
@@ -328,36 +326,36 @@ def handle_record_recent(event, user_id: str):
     conn.close()
 
     if not rows:
-        reply(event, "📭 目前還沒有任何記錄")
+        reply(event, "目前還沒有任何記錄")
         return
 
-    lines = ["📜 最近 10 筆記錄\n"]
+    lines = ["最近 10 筆記錄\n"]
     for r in rows:
-        emoji = CATEGORY_EMOJI_RECORD.get(r["category"], "📌")
-        type_icon = "📈" if r["type"] == "收入" else "📉"
+        emoji = CATEGORY_EMOJI_RECORD.get(r["category"], "")
+        t = "+" if r["type"] == "收入" else "-"
         d = r["tx_date"].strftime("%m/%d") if r["tx_date"] else r["created_at"].strftime("%m/%d")
-        lines.append(f"  {d} {type_icon}{emoji} ${r['amount']:,} {r['description']}")
+        lines.append(f"{d} {emoji} {t}${r['amount']:,} {r['description']}")
 
     reply(event, "\n".join(lines))
 
 # ── Help messages ──
 
 HELP_NOTE = (
-    "📝 Note 模式指令：\n\n"
-    "• 直接輸入自然語言 → AI 自動建立待辦\n"
-    "• 今天 → 查看今日待辦\n"
-    "• 本週 → 查看近期未完成\n"
-    "• 完成 [id] → 標記完成\n"
-    "• 刪 [id] → 刪除待辦\n"
-    "• 清除完成 → 清空已完成項目"
+    "Note 模式指令：\n\n"
+    "直接輸入自然語言 → AI 自動建立待辦\n"
+    "今天 → 查看今日待辦\n"
+    "本週 → 查看近期未完成\n"
+    "完成 [id] → 標記完成\n"
+    "刪 [id] → 刪除待辦\n"
+    "清除完成 → 清空已完成項目"
 )
 
 HELP_RECORD = (
-    "💰 Record 模式指令：\n\n"
-    "• 直接輸入自然語言 → AI 自動記帳\n"
-    "• 帳戶 → 查看收支總覽\n"
-    "• 本月 → 查看本月報表\n"
-    "• 明細 → 查看最近 10 筆"
+    "Record 模式指令：\n\n"
+    "直接輸入自然語言 → AI 自動記帳\n"
+    "帳戶 → 查看收支總覽\n"
+    "本月 → 查看本月報表\n"
+    "明細 → 查看最近 10 筆"
 )
 
 # ── Main routing ──
@@ -382,17 +380,17 @@ def handle_message(event):
     # ── Global commands ──
     if text == "#note":
         set_user_mode(user_id, "note")
-        reply(event, f"✅ 已切換至 Note 模式\n\n{HELP_NOTE}")
+        reply(event, f"已切換至 Note 模式\n\n{HELP_NOTE}")
         return
     if text == "#record":
         set_user_mode(user_id, "record")
-        reply(event, f"✅ 已切換至 Record 模式\n\n{HELP_RECORD}")
+        reply(event, f"已切換至 Record 模式\n\n{HELP_RECORD}")
         return
     if text == "說明":
         reply(event, HELP_NOTE if mode == "note" else HELP_RECORD)
         return
     if text == "模式":
-        mode_name = "📝 Note（待辦清單）" if mode == "note" else "💰 Record（記帳）"
+        mode_name = "Note（待辦清單）" if mode == "note" else "Record（記帳）"
         reply(event, f"目前模式：{mode_name}\n\n輸入 #note 或 #record 切換模式")
         return
 
@@ -409,13 +407,13 @@ def handle_message(event):
                 todo_id = int(text.replace("完成", "").strip())
                 handle_note_done(event, user_id, todo_id)
             except ValueError:
-                reply(event, "⚠️ 格式錯誤，請輸入：完成 [編號]")
+                reply(event, "格式錯誤，請輸入：完成 [編號]")
         elif text.startswith("刪"):
             try:
                 todo_id = int(text.replace("刪", "").strip())
                 handle_note_delete(event, user_id, todo_id)
             except ValueError:
-                reply(event, "⚠️ 格式錯誤，請輸入：刪 [編號]")
+                reply(event, "格式錯誤，請輸入：刪 [編號]")
         else:
             handle_note_natural(event, user_id, text)
         return
