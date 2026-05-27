@@ -600,6 +600,18 @@ def handle_message(event):
         mode_name = mode_names.get(mode, mode)
         reply(event, f"目前模式：{mode_name}\n\n輸入 #note / #record / #chat 切換模式")
         return
+    if text == "#mode":
+        mark = {mode: " ← 目前"}
+        reply(event, (
+            f"── #note Note（待辦清單）{mark.get('note', '')} ──\n"
+            f"{HELP_NOTE}\n\n"
+            f"── #record Record（記帳）{mark.get('record', '')} ──\n"
+            f"{HELP_RECORD}\n\n"
+            f"── #chat Chat（AI 聊天）{mark.get('chat', '')} ──\n"
+            f"{HELP_CHAT}\n\n"
+            "輸入 #note / #record / #chat 切換模式"
+        ))
+        return
 
     # ── Exact keyword shortcuts ──
     if mode == "note":
