@@ -1,4 +1,5 @@
 import os
+import re
 import json
 from datetime import date
 from openai import OpenAI
@@ -141,14 +142,35 @@ def _execute_tool(name: str, args: dict) -> str:
     return "未知工具"
 
 
+def _parse_dsml_tool_calls(content: str) -> list[dict] | None:
+    """Parse DeepSeek DSML text-format tool calls as fallback."""
+    if "DSML" not in content:
+        return None
+    calls = []
+    for m in re.finditer(
+        r'<\|?\|?DSML\|?\|?invoke\s+name="(\w+)">(.*?)</\|?\|?DSML\|?\|?invoke>',
+        content, re.DOTALL
+    ):
+        name = m.group(1)
+        params = {}
+        for pm in re.finditer(
+            r'<\|?\|?DSML\|?\|?parameter\s+name="(\w+)"[^>]*>(.*?)</\|?\|?DSML\|?\|?parameter>',
+            m.group(2), re.DOTALL
+        ):
+            params[pm.group(1)] = pm.group(2).strip()
+        calls.append({"name": name, "arguments": params})
+    return calls if calls else None
+
+
 def agent_chat(user_text: str, history: list) -> str:
     today = date.today().isoformat()
     messages = [
         {"role": "system", "content": (
             f"你是一個友善的智慧助理。今天日期是 {today}。"
             "你可以回答各種問題，包括生活、料理、旅遊、知識等。"
-            "如果需要即時資訊（天氣、新聞、股價等），請使用搜尋工具。"
-            "如果是常識或知識性問題，直接回答即可，不需要搜尋。"
+            "涉及天氣、新聞、股價、匯率、即時資訊等問題，你必須使用 web_search 工具搜尋，"
+            "絕對不要自己猜測或編造即時資訊。"
+            "如果是常識或知識性問題，直接回答即可。"
             "回答請使用繁體中文，保持簡潔友善。"
         )}
     ]
@@ -165,6 +187,7 @@ def agent_chat(user_text: str, history: list) -> str:
         )
         msg = resp.choices[0].message
 
+        # ── Standard tool_calls handling ──
         if msg.tool_calls:
             assistant_msg = {"role": "assistant", "content": msg.content or ""}
             assistant_msg["tool_calls"] = [
@@ -196,6 +219,26 @@ def agent_chat(user_text: str, history: list) -> str:
                 temperature=0.7
             )
             msg = resp.choices[0].message
+
+        # ── Fallback: DSML text-format tool calls ──
+        elif msg.content and "DSML" in msg.content:
+            dsml_calls = _parse_dsml_tool_calls(msg.content)
+            if dsml_calls:
+                results = []
+                for call in dsml_calls:
+                    result = _execute_tool(call["name"], call["arguments"])
+                    results.append(result)
+                combined = "\n".join(results)
+                messages.append({"role": "assistant", "content": "我來搜尋一下。"})
+                messages.append({"role": "user", "content":
+                    f"搜尋結果：\n{combined}\n\n請根據以上結果回答我之前的問題。"})
+                resp = client.chat.completions.create(
+                    model=MODEL,
+                    max_tokens=1000,
+                    messages=messages,
+                    temperature=0.7
+                )
+                msg = resp.choices[0].message
 
         return msg.content or "抱歉，我無法回答這個問題"
     except Exception:
