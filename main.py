@@ -411,6 +411,18 @@ def handle_message(event):
         reply(event, f"目前模式：{mode_name}\n\n輸入 #note 或 #record 切換模式")
         return
 
+    # ── Shared: delete ──
+    if text.startswith("刪"):
+        try:
+            item_id = int(text.replace("刪除", "").replace("刪", "").strip())
+            if mode == "note":
+                handle_note_delete(event, user_id, item_id)
+            else:
+                handle_record_delete(event, user_id, item_id)
+        except ValueError:
+            reply(event, "格式錯誤，請輸入：刪 [編號]")
+        return
+
     # ── Note mode ──
     if mode == "note":
         if text in ("今天", "今日"):
@@ -425,12 +437,6 @@ def handle_message(event):
                 handle_note_done(event, user_id, todo_id)
             except ValueError:
                 reply(event, "格式錯誤，請輸入：完成 [編號]")
-        elif text.startswith("刪"):
-            try:
-                todo_id = int(text.replace("刪", "").strip())
-                handle_note_delete(event, user_id, todo_id)
-            except ValueError:
-                reply(event, "格式錯誤，請輸入：刪 [編號]")
         else:
             handle_note_natural(event, user_id, text)
         return
@@ -443,12 +449,6 @@ def handle_message(event):
             handle_record_monthly(event, user_id)
         elif text in ("明細", "紀錄", "最近") or "最近" in text and "筆" in text:
             handle_record_recent(event, user_id)
-        elif text.startswith("刪"):
-            try:
-                tx_id = int(text.replace("刪", "").strip())
-                handle_record_delete(event, user_id, tx_id)
-            except ValueError:
-                reply(event, "格式錯誤，請輸入：刪 [編號]")
         else:
             handle_record_natural(event, user_id, text)
         return
