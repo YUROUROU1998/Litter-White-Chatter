@@ -38,8 +38,12 @@ def init_db():
             category TEXT NOT NULL,
             amount INTEGER NOT NULL,
             description TEXT NOT NULL,
+            tx_date DATE DEFAULT CURRENT_DATE,
             created_at TIMESTAMP DEFAULT NOW()
         );
+    """)
+    cur.execute("""
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_date DATE DEFAULT CURRENT_DATE;
     """)
     conn.commit()
     cur.close()

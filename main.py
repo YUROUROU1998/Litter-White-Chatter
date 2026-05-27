@@ -213,9 +213,10 @@ def handle_record_natural(event, user_id: str, text: str):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO transactions (user_id, type, category, amount, description) "
-        "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-        (user_id, tx["type"], tx["category"], tx["amount"], tx["description"])
+        "INSERT INTO transactions (user_id, type, category, amount, description, tx_date) "
+        "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (user_id, tx["type"], tx["category"], tx["amount"], tx["description"],
+         tx.get("tx_date", date.today().isoformat()))
     )
     tid = cur.fetchone()[0]
     conn.commit()
@@ -224,10 +225,12 @@ def handle_record_natural(event, user_id: str, text: str):
 
     emoji = CATEGORY_EMOJI_RECORD.get(tx["category"], "📌")
     type_icon = "📈" if tx["type"] == "收入" else "📉"
+    tx_date = tx.get("tx_date", date.today().isoformat())
     reply(event, (
         f"{type_icon} 已記錄 #{tid}\n\n"
         f"  {emoji} {tx['category']}｜{tx['type']}\n"
         f"  💰 ${tx['amount']:,}\n"
+        f"  📅 {tx_date}\n"
         f"  📝 {tx['description']}"
     ))
 
@@ -270,7 +273,7 @@ def handle_record_monthly(event, user_id: str):
 
     cur.execute(
         "SELECT type, category, COALESCE(SUM(amount), 0) AS total "
-        "FROM transactions WHERE user_id = %s AND created_at >= %s "
+        "FROM transactions WHERE user_id = %s AND tx_date >= %s "
         "GROUP BY type, category ORDER BY type, total DESC",
         (user_id, month_start)
     )
@@ -332,7 +335,7 @@ def handle_record_recent(event, user_id: str):
     for r in rows:
         emoji = CATEGORY_EMOJI_RECORD.get(r["category"], "📌")
         type_icon = "📈" if r["type"] == "收入" else "📉"
-        d = r["created_at"].strftime("%m/%d")
+        d = r["tx_date"].strftime("%m/%d") if r["tx_date"] else r["created_at"].strftime("%m/%d")
         lines.append(f"  {d} {type_icon}{emoji} ${r['amount']:,} {r['description']}")
 
     reply(event, "\n".join(lines))

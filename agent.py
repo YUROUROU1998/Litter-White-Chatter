@@ -41,19 +41,21 @@ due_date：若無明確日期則填 {today}
 
 
 def agent_parse_transaction(user_text: str) -> dict | None:
+    today = date.today().isoformat()
     resp = client.chat.completions.create(
         model=MODEL,
         max_tokens=1000,
         messages=[
-            {"role": "system", "content": """你是記帳解析助理。
+            {"role": "system", "content": f"""你是記帳解析助理。今天日期是 {today}。
 將用戶的自然語言輸入解析為一筆交易記錄，回傳 JSON Object。
 
 格式：
-{ "type": "收入或支出", "category": "分類", "amount": 金額正整數, "description": "簡短描述" }
+{{ "type": "收入或支出", "category": "分類", "amount": 金額正整數, "description": "簡短描述", "tx_date": "YYYY-MM-DD" }}
 
 type 值域：收入 / 支出
 category 值域：餐飲 / 交通 / 娛樂 / 購物 / 醫療 / 薪資 / 獎金 / 其他
 amount：正整數（無論收支都填正數）
+tx_date：交易發生日期，若無明確日期則填 {today}
 
 只回傳 JSON Object，不要任何其他文字。"""},
             {"role": "user", "content": user_text}
