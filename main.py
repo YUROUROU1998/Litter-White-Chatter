@@ -214,6 +214,14 @@ def handle_note_natural(event, user_id: str, text: str):
         else:
             reply(event, "找不到對應的待辦")
 
+    elif action == "edit":
+        todo_id = result.get("id")
+        updates = result.get("updates", {})
+        if todo_id:
+            handle_note_edit(event, user_id, todo_id, updates)
+        else:
+            reply(event, "請指定要修改的待辦編號，例如：修改#3 標題改成買菜")
+
     elif action == "delete_all":
         request_confirm(event, user_id, "note", "delete_all", {}, "刪除全部待辦")
 
@@ -320,6 +328,45 @@ def handle_note_delete(event, user_id: str, todo_id: int):
         reply(event, f"找不到待辦 #{todo_id}")
 
 
+def handle_note_edit(event, user_id: str, todo_id: int, updates: dict):
+    conn = get_conn()
+    cur = get_cursor(conn)
+    cur.execute("SELECT * FROM todos WHERE id = %s AND user_id = %s", (todo_id, user_id))
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
+        reply(event, f"找不到待辦 #{todo_id}")
+        return
+
+    allowed = {"title", "category", "priority", "due_date"}
+    fields = {k: v for k, v in updates.items() if k in allowed and v}
+    if not fields:
+        cur.close()
+        conn.close()
+        reply(event, "沒有需要修改的內容")
+        return
+
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [todo_id, user_id]
+    cur.execute(f"UPDATE todos SET {set_clause} WHERE id = %s AND user_id = %s", values)
+    conn.commit()
+
+    cur.execute("SELECT * FROM todos WHERE id = %s AND user_id = %s", (todo_id, user_id))
+    updated = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    p = PRIORITY_EMOJI.get(updated["priority"], "")
+    c = CATEGORY_EMOJI_NOTE.get(updated["category"], "")
+    changed = "、".join({"title": "標題", "category": "分類", "priority": "優先度", "due_date": "日期"}.get(k, k) for k in fields)
+    reply(event, (
+        f"已修改 #{todo_id}（{changed}）\n\n"
+        f"{c}{p} {updated['title']}\n"
+        f"{updated['due_date']}｜{updated['category']}｜{updated['priority']}"
+    ))
+
+
 def handle_note_clear_done(event, user_id: str):
     request_confirm(event, user_id, "note", "clear_done", {}, "清除已完成的待辦")
 
@@ -373,6 +420,14 @@ def handle_record_natural(event, user_id: str, text: str):
             reply(event, f"已刪除 #{', #'.join(deleted_ids)}")
         else:
             reply(event, "找不到對應的記錄")
+
+    elif action == "edit":
+        tx_id = result.get("id")
+        updates = result.get("updates", {})
+        if tx_id:
+            handle_record_edit(event, user_id, tx_id, updates)
+        else:
+            reply(event, "請指定要修改的記錄編號，例如：修改#5 金額改成300")
 
     elif action == "delete_all":
         request_confirm(event, user_id, "record", "delete_all", {}, "刪除全部記帳記錄")
@@ -510,6 +565,47 @@ def handle_record_delete(event, user_id: str, tx_id: int):
     else:
         reply(event, f"找不到記錄 #{tx_id}")
 
+
+def handle_record_edit(event, user_id: str, tx_id: int, updates: dict):
+    conn = get_conn()
+    cur = get_cursor(conn)
+    cur.execute("SELECT * FROM transactions WHERE id = %s AND user_id = %s", (tx_id, user_id))
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
+        reply(event, f"找不到記錄 #{tx_id}")
+        return
+
+    allowed = {"type", "category", "amount", "description", "tx_date"}
+    fields = {k: v for k, v in updates.items() if k in allowed and v is not None}
+    if not fields:
+        cur.close()
+        conn.close()
+        reply(event, "沒有需要修改的內容")
+        return
+
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [tx_id, user_id]
+    cur.execute(f"UPDATE transactions SET {set_clause} WHERE id = %s AND user_id = %s", values)
+    conn.commit()
+
+    cur.execute("SELECT * FROM transactions WHERE id = %s AND user_id = %s", (tx_id, user_id))
+    updated = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    emoji = CATEGORY_EMOJI_RECORD.get(updated["category"], "")
+    field_names = {"type": "類型", "category": "分類", "amount": "金額", "description": "描述", "tx_date": "日期"}
+    changed = "、".join(field_names.get(k, k) for k in fields)
+    reply(event, (
+        f"已修改 #{tx_id}（{changed}）\n\n"
+        f"{emoji} {updated['category']}｜{updated['type']}\n"
+        f"${updated['amount']:,}\n"
+        f"{updated['tx_date']}\n"
+        f"{updated['description']}"
+    ))
+
 # ── Help messages ──
 
 HELP_NOTE = (
@@ -518,6 +614,7 @@ HELP_NOTE = (
     "今天 → 查看今日待辦\n"
     "本週 → 查看近期未完成\n"
     "完成 [id] → 標記完成\n"
+    "修改#[id] 內容 → 修改待辦\n"
     "刪 [id] → 刪除待辦\n"
     "清除完成 → 清空已完成項目\n"
     "刪除全部/今天/本月 → 批次刪除"
@@ -529,6 +626,7 @@ HELP_RECORD = (
     "帳戶 → 查看收支總覽\n"
     "本月 → 查看本月報表\n"
     "明細 → 查看最近 10 筆\n"
+    "修改#[id] 內容 → 修改記錄\n"
     "刪 [id] → 刪除記錄\n"
     "刪除全部/今天/本月 → 批次刪除"
 )

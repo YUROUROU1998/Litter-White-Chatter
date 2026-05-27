@@ -39,7 +39,11 @@ def agent_parse_todos(user_text: str) -> dict | None:
 6. 如果是刪除某月的待辦，回傳：
 {{ "action": "delete_by_month", "month": "YYYY-MM" }}
 
-7. 如果無法判斷（閒聊、無關內容），回傳：
+7. 如果是修改待辦，回傳：
+{{ "action": "edit", "id": 編號, "updates": {{ "title": "新標題", "category": "新分類", "priority": "新優先度", "due_date": "YYYY-MM-DD" }} }}
+updates 只包含用戶要修改的欄位，不需要全部填寫。
+
+8. 如果無法判斷（閒聊、無關內容），回傳：
 {{ "action": "unknown" }}
 
 category 值域：生活 / 工作 / 健康 / 購物 / 娛樂 / 其他
@@ -84,7 +88,11 @@ def agent_parse_transaction(user_text: str) -> dict | None:
 5. 如果是刪除某月的記錄，回傳：
 {{ "action": "delete_by_month", "month": "YYYY-MM" }}
 
-6. 如果無法判斷（閒聊、查詢、無關內容），回傳：
+6. 如果是修改記錄，回傳：
+{{ "action": "edit", "id": 編號, "updates": {{ "type": "收入或支出", "category": "分類", "amount": 金額, "description": "描述", "tx_date": "YYYY-MM-DD" }} }}
+updates 只包含用戶要修改的欄位，不需要全部填寫。
+
+7. 如果無法判斷（閒聊、查詢、無關內容），回傳：
 {{ "action": "unknown" }}
 
 type 值域：收入 / 支出
