@@ -65,7 +65,7 @@ def set_user_mode(user_id: str, mode: str):
 
 def reply(event, text: str):
     with ApiClient(config) as api_client:
-        MessagingApi(api_client).reply_message(
+        MessagingApi(api_client).reply_message_with_http_info(
             ReplyMessageRequest(
                 reply_token=event.reply_token,
                 messages=[TextMessage(text=text)]
