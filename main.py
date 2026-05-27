@@ -342,7 +342,7 @@ def handle_record_recent(event, user_id: str):
 
 HELP_NOTE = (
     "Note 模式指令：\n\n"
-    "直接輸入自然語言 → AI 自動建立待辦\n"
+    "直接輸入 AI 自動建立待辦\n"
     "今天 → 查看今日待辦\n"
     "本週 → 查看近期未完成\n"
     "完成 [id] → 標記完成\n"
@@ -352,7 +352,7 @@ HELP_NOTE = (
 
 HELP_RECORD = (
     "Record 模式指令：\n\n"
-    "直接輸入自然語言 → AI 自動記帳\n"
+    "直接輸入 AI 自動記帳\n"
     "帳戶 → 查看收支總覽\n"
     "本月 → 查看本月報表\n"
     "明細 → 查看最近 10 筆"
