@@ -207,7 +207,7 @@ def handle_note_clear_done(event, user_id: str):
 def handle_record_natural(event, user_id: str, text: str):
     tx = agent_parse_transaction(text)
     if tx is None:
-        reply(event, "⚠️ AI 解析失敗，請重試")
+        reply(event, "⚠️ 無法辨識為一筆交易，請輸入包含金額的消費或收入\n\n💡 範例：午餐吃拉麵250元\n💡 輸入「說明」查看所有指令")
         return
 
     conn = get_conn()
@@ -422,11 +422,11 @@ def handle_message(event):
 
     # ── Record mode ──
     if mode == "record":
-        if text in ("帳戶", "餘額"):
+        if text in ("帳戶", "餘額", "總覽"):
             handle_record_balance(event, user_id)
-        elif text in ("本月", "月報"):
+        elif text in ("本月", "月報", "本月報表"):
             handle_record_monthly(event, user_id)
-        elif text in ("明細", "紀錄"):
+        elif text in ("明細", "紀錄", "最近") or "最近" in text and "筆" in text:
             handle_record_recent(event, user_id)
         else:
             handle_record_natural(event, user_id, text)
