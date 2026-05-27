@@ -12,7 +12,12 @@ from linebot.v3.exceptions import InvalidSignatureError
 
 from db import get_conn, get_cursor, init_db
 from agent import agent_parse_todos, agent_parse_transaction, agent_chat
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+
+TZ_TW = timezone(timedelta(hours=8))
+
+def today_tw():
+    return datetime.now(TZ_TW).date()
 
 app = Flask(__name__)
 
@@ -168,7 +173,7 @@ def handle_note_natural(event, user_id: str, text: str):
             cur.execute(
                 "INSERT INTO todos (user_id, title, category, priority, due_date) "
                 "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (user_id, t["title"], t["category"], t["priority"], t.get("due_date", date.today().isoformat()))
+                (user_id, t["title"], t["category"], t["priority"], t.get("due_date", today_tw().isoformat()))
             )
             tid = cur.fetchone()[0]
             p = PRIORITY_EMOJI.get(t["priority"], "")
@@ -226,11 +231,11 @@ def handle_note_natural(event, user_id: str, text: str):
         request_confirm(event, user_id, "note", "delete_all", {}, "刪除全部待辦")
 
     elif action == "delete_by_date":
-        d = result.get("date", date.today().isoformat())
+        d = result.get("date", today_tw().isoformat())
         request_confirm(event, user_id, "note", "delete_by_date", {"date": d}, f"刪除 {d} 的待辦")
 
     elif action == "delete_by_month":
-        m = result.get("month", date.today().strftime("%Y-%m"))
+        m = result.get("month", today_tw().strftime("%Y-%m"))
         request_confirm(event, user_id, "note", "delete_by_month", month_range(m), f"刪除 {m} 的待辦")
 
     else:
@@ -242,7 +247,7 @@ def handle_note_today(event, user_id: str):
     cur = get_cursor(conn)
     cur.execute(
         "SELECT * FROM todos WHERE user_id = %s AND due_date = %s ORDER BY done, priority",
-        (user_id, date.today())
+        (user_id, today_tw())
     )
     rows = cur.fetchall()
     cur.close()
@@ -255,7 +260,7 @@ def handle_note_today(event, user_id: str):
     undone = [r for r in rows if not r["done"]]
     done = [r for r in rows if r["done"]]
 
-    lines = [f"今日待辦（{date.today()}）\n"]
+    lines = [f"今日待辦（{today_tw()}）\n"]
     if undone:
         lines.append("── 未完成 ──")
         for r in undone:
@@ -277,7 +282,7 @@ def handle_note_week(event, user_id: str):
     cur.execute(
         "SELECT * FROM todos WHERE user_id = %s AND done = FALSE AND due_date >= %s "
         "ORDER BY due_date, priority",
-        (user_id, date.today())
+        (user_id, today_tw())
     )
     rows = cur.fetchall()
     cur.close()
@@ -387,7 +392,7 @@ def handle_record_natural(event, user_id: str, text: str):
             "INSERT INTO transactions (user_id, type, category, amount, description, tx_date) "
             "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
             (user_id, result["type"], result["category"], result["amount"], result["description"],
-             result.get("tx_date", date.today().isoformat()))
+             result.get("tx_date", today_tw().isoformat()))
         )
         tid = cur.fetchone()[0]
         conn.commit()
@@ -395,7 +400,7 @@ def handle_record_natural(event, user_id: str, text: str):
         conn.close()
 
         emoji = CATEGORY_EMOJI_RECORD.get(result["category"], "")
-        tx_date = result.get("tx_date", date.today().isoformat())
+        tx_date = result.get("tx_date", today_tw().isoformat())
         reply(event, (
             f"已記錄 #{tid}\n\n"
             f"{emoji} {result['category']}｜{result['type']}\n"
@@ -433,11 +438,11 @@ def handle_record_natural(event, user_id: str, text: str):
         request_confirm(event, user_id, "record", "delete_all", {}, "刪除全部記帳記錄")
 
     elif action == "delete_by_date":
-        d = result.get("date", date.today().isoformat())
+        d = result.get("date", today_tw().isoformat())
         request_confirm(event, user_id, "record", "delete_by_date", {"date": d}, f"刪除 {d} 的記錄")
 
     elif action == "delete_by_month":
-        m = result.get("month", date.today().strftime("%Y-%m"))
+        m = result.get("month", today_tw().strftime("%Y-%m"))
         request_confirm(event, user_id, "record", "delete_by_month", month_range(m), f"刪除 {m} 的記錄")
 
     else:
@@ -477,7 +482,7 @@ def handle_record_balance(event, user_id: str):
 def handle_record_monthly(event, user_id: str):
     conn = get_conn()
     cur = get_cursor(conn)
-    today = date.today()
+    today = today_tw()
     month_start = today.replace(day=1)
 
     cur.execute(
@@ -727,12 +732,12 @@ def handle_message(event):
             return
         if text in ("刪除今天", "刪除今日"):
             request_confirm(event, user_id, "note", "delete_by_date",
-                          {"date": date.today().isoformat()}, f"刪除 {date.today()} 的待辦")
+                          {"date": today_tw().isoformat()}, f"刪除 {today_tw()} 的待辦")
             return
         if text == "刪除本月":
             request_confirm(event, user_id, "note", "delete_by_month",
-                          month_range(date.today().strftime("%Y-%m")),
-                          f"刪除 {date.today().strftime('%Y/%m')} 的待辦")
+                          month_range(today_tw().strftime("%Y-%m")),
+                          f"刪除 {today_tw().strftime('%Y/%m')} 的待辦")
             return
 
     if mode == "record":
@@ -750,12 +755,12 @@ def handle_message(event):
             return
         if text in ("刪除今天", "刪除今日"):
             request_confirm(event, user_id, "record", "delete_by_date",
-                          {"date": date.today().isoformat()}, f"刪除 {date.today()} 的記錄")
+                          {"date": today_tw().isoformat()}, f"刪除 {today_tw()} 的記錄")
             return
         if text == "刪除本月":
             request_confirm(event, user_id, "record", "delete_by_month",
-                          month_range(date.today().strftime("%Y-%m")),
-                          f"刪除 {date.today().strftime('%Y/%m')} 的記錄")
+                          month_range(today_tw().strftime("%Y-%m")),
+                          f"刪除 {today_tw().strftime('%Y/%m')} 的記錄")
             return
 
     # ── Everything else → AI agent ──

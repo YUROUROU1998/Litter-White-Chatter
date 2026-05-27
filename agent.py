@@ -1,9 +1,14 @@
 import os
 import re
 import json
-from datetime import date
+from datetime import datetime, timezone, timedelta
 from openai import OpenAI
 from duckduckgo_search import DDGS
+
+TZ_TW = timezone(timedelta(hours=8))
+
+def _today() -> str:
+    return datetime.now(TZ_TW).strftime("%Y-%m-%d")
 
 client = OpenAI(
     api_key=os.environ["DEEPSEEK_API_KEY"],
@@ -13,7 +18,7 @@ client = OpenAI(
 MODEL = "deepseek-chat"
 
 def agent_parse_todos(user_text: str) -> dict | None:
-    today = date.today().isoformat()
+    today = _today()
     resp = client.chat.completions.create(
         model=MODEL,
         max_tokens=1000,
@@ -65,7 +70,7 @@ due_date：若無明確日期則填 {today}
 
 
 def agent_parse_transaction(user_text: str) -> dict | None:
-    today = date.today().isoformat()
+    today = _today()
     resp = client.chat.completions.create(
         model=MODEL,
         max_tokens=1000,
@@ -141,7 +146,7 @@ CHAT_TOOLS = [
 def _execute_tool(name: str, args: dict) -> str:
     if name == "web_search":
         try:
-            results = DDGS().text(args["query"], max_results=3)
+            results = DDGS().text(args["query"], max_results=5, region="tw-tzh")
             if results:
                 return "\n".join(f"- {r['title']}: {r['body']}" for r in results)
             return "沒有找到相關結果"
@@ -195,7 +200,7 @@ def _do_search_and_answer(messages: list, search_results: str) -> str:
 
 
 def agent_chat(user_text: str, history: list) -> str:
-    today = date.today().isoformat()
+    today = _today()
     messages = [
         {"role": "system", "content": (
             f"你是一個友善的智慧助理。今天日期是 {today}。"
@@ -221,19 +226,7 @@ def agent_chat(user_text: str, history: list) -> str:
 
         # ── Path A: Standard tool_calls ──
         if msg.tool_calls:
-            assistant_msg = {"role": "assistant", "content": msg.content or ""}
-            assistant_msg["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments
-                    }
-                }
-                for tc in msg.tool_calls
-            ]
-            messages.append(assistant_msg)
+            messages.append(msg)
 
             for tc in msg.tool_calls:
                 args = json.loads(tc.function.arguments)
@@ -248,6 +241,7 @@ def agent_chat(user_text: str, history: list) -> str:
                 model=MODEL,
                 max_tokens=1000,
                 messages=messages,
+                tools=CHAT_TOOLS,
                 temperature=0.7
             )
             answer = resp2.choices[0].message.content or ""
