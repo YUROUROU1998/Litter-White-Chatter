@@ -21,6 +21,7 @@ handler = WebhookHandler(os.environ["LINE_CHANNEL_SECRET"])
 
 # ── Chat mode: in-memory conversation history (cleared on mode switch) ──
 chat_histories = {}
+pending_confirmations = {}
 
 # ── Emoji maps ──
 
@@ -74,6 +75,80 @@ def reply(event, text: str):
                 messages=[TextMessage(text=text)]
             )
         )
+
+# ── Bulk delete confirmation ──
+
+def month_range(month_str: str) -> dict:
+    year, month = month_str.split("-")
+    year, month = int(year), int(month)
+    start = f"{year}-{month:02d}-01"
+    if month == 12:
+        end = f"{year + 1}-01-01"
+    else:
+        end = f"{year}-{month + 1:02d}-01"
+    return {"month_start": start, "month_end": end}
+
+
+def count_records(mode: str, user_id: str, action: str, params: dict) -> int:
+    conn = get_conn()
+    cur = conn.cursor()
+    table = "todos" if mode == "note" else "transactions"
+    date_col = "due_date" if mode == "note" else "tx_date"
+
+    if action == "clear_done":
+        cur.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id = %s AND done = TRUE", (user_id,))
+    elif action == "delete_all":
+        cur.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id = %s", (user_id,))
+    elif action == "delete_by_date":
+        cur.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id = %s AND {date_col} = %s",
+                    (user_id, params["date"]))
+    elif action == "delete_by_month":
+        cur.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id = %s AND {date_col} >= %s AND {date_col} < %s",
+                    (user_id, params["month_start"], params["month_end"]))
+
+    count = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return count
+
+
+def request_confirm(event, user_id: str, mode: str, action: str, params: dict, description: str):
+    count = count_records(mode, user_id, action, params)
+    if count == 0:
+        reply(event, "沒有符合條件的記錄")
+        return
+    pending_confirmations[user_id] = {"mode": mode, "action": action, "params": params}
+    reply(event, f"即將{description}（共 {count} 筆）\n\n輸入「確認」執行，其他輸入取消")
+
+
+def execute_pending(event, user_id: str):
+    pending = pending_confirmations.pop(user_id)
+    mode = pending["mode"]
+    action = pending["action"]
+    params = pending.get("params", {})
+
+    conn = get_conn()
+    cur = conn.cursor()
+    table = "todos" if mode == "note" else "transactions"
+    date_col = "due_date" if mode == "note" else "tx_date"
+
+    if action == "clear_done":
+        cur.execute(f"DELETE FROM {table} WHERE user_id = %s AND done = TRUE", (user_id,))
+    elif action == "delete_all":
+        cur.execute(f"DELETE FROM {table} WHERE user_id = %s", (user_id,))
+    elif action == "delete_by_date":
+        cur.execute(f"DELETE FROM {table} WHERE user_id = %s AND {date_col} = %s",
+                    (user_id, params["date"]))
+    elif action == "delete_by_month":
+        cur.execute(f"DELETE FROM {table} WHERE user_id = %s AND {date_col} >= %s AND {date_col} < %s",
+                    (user_id, params["month_start"], params["month_end"]))
+
+    count = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    reply(event, f"已刪除 {count} 筆記錄")
+
 
 # ── Note mode handlers ──
 
@@ -138,6 +213,17 @@ def handle_note_natural(event, user_id: str, text: str):
             reply(event, f"已刪除 #{', #'.join(deleted_ids)}")
         else:
             reply(event, "找不到對應的待辦")
+
+    elif action == "delete_all":
+        request_confirm(event, user_id, "note", "delete_all", {}, "刪除全部待辦")
+
+    elif action == "delete_by_date":
+        d = result.get("date", date.today().isoformat())
+        request_confirm(event, user_id, "note", "delete_by_date", {"date": d}, f"刪除 {d} 的待辦")
+
+    elif action == "delete_by_month":
+        m = result.get("month", date.today().strftime("%Y-%m"))
+        request_confirm(event, user_id, "note", "delete_by_month", month_range(m), f"刪除 {m} 的待辦")
 
     else:
         reply(event, "無法辨識，請輸入待辦內容或輸入「說明」查看指令")
@@ -235,14 +321,7 @@ def handle_note_delete(event, user_id: str, todo_id: int):
 
 
 def handle_note_clear_done(event, user_id: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM todos WHERE user_id = %s AND done = TRUE", (user_id,))
-    count = cur.rowcount
-    conn.commit()
-    cur.close()
-    conn.close()
-    reply(event, f"已清除 {count} 筆已完成待辦")
+    request_confirm(event, user_id, "note", "clear_done", {}, "清除已完成的待辦")
 
 # ── Record mode handlers ──
 
@@ -294,6 +373,17 @@ def handle_record_natural(event, user_id: str, text: str):
             reply(event, f"已刪除 #{', #'.join(deleted_ids)}")
         else:
             reply(event, "找不到對應的記錄")
+
+    elif action == "delete_all":
+        request_confirm(event, user_id, "record", "delete_all", {}, "刪除全部記帳記錄")
+
+    elif action == "delete_by_date":
+        d = result.get("date", date.today().isoformat())
+        request_confirm(event, user_id, "record", "delete_by_date", {"date": d}, f"刪除 {d} 的記錄")
+
+    elif action == "delete_by_month":
+        m = result.get("month", date.today().strftime("%Y-%m"))
+        request_confirm(event, user_id, "record", "delete_by_month", month_range(m), f"刪除 {m} 的記錄")
 
     else:
         reply(event, "無法辨識，請輸入消費或收入內容，或輸入「說明」查看指令")
@@ -429,7 +519,8 @@ HELP_NOTE = (
     "本週 → 查看近期未完成\n"
     "完成 [id] → 標記完成\n"
     "刪 [id] → 刪除待辦\n"
-    "清除完成 → 清空已完成項目"
+    "清除完成 → 清空已完成項目\n"
+    "刪除全部/今天/本月 → 批次刪除"
 )
 
 HELP_RECORD = (
@@ -438,7 +529,8 @@ HELP_RECORD = (
     "帳戶 → 查看收支總覽\n"
     "本月 → 查看本月報表\n"
     "明細 → 查看最近 10 筆\n"
-    "刪 [id] → 刪除記錄"
+    "刪 [id] → 刪除記錄\n"
+    "刪除全部/今天/本月 → 批次刪除"
 )
 
 HELP_CHAT = (
@@ -467,6 +559,17 @@ def handle_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     mode = get_user_mode(user_id)
+
+    # ── Confirmation handling ──
+    if user_id in pending_confirmations:
+        if text == "確認":
+            execute_pending(event, user_id)
+            return
+        if text in ("取消", "算了"):
+            pending_confirmations.pop(user_id)
+            reply(event, "已取消")
+            return
+        pending_confirmations.pop(user_id)
 
     # ── Global commands ──
     if text == "#note":
@@ -509,6 +612,18 @@ def handle_message(event):
         if text == "清除完成":
             handle_note_clear_done(event, user_id)
             return
+        if text in ("刪除全部", "清空全部"):
+            request_confirm(event, user_id, "note", "delete_all", {}, "刪除全部待辦")
+            return
+        if text in ("刪除今天", "刪除今日"):
+            request_confirm(event, user_id, "note", "delete_by_date",
+                          {"date": date.today().isoformat()}, f"刪除 {date.today()} 的待辦")
+            return
+        if text == "刪除本月":
+            request_confirm(event, user_id, "note", "delete_by_month",
+                          month_range(date.today().strftime("%Y-%m")),
+                          f"刪除 {date.today().strftime('%Y/%m')} 的待辦")
+            return
 
     if mode == "record":
         if text in ("帳戶", "餘額", "總覽"):
@@ -519,6 +634,18 @@ def handle_message(event):
             return
         if text in ("明細", "紀錄", "最近") or ("最近" in text and "筆" in text):
             handle_record_recent(event, user_id)
+            return
+        if text in ("刪除全部", "清空全部"):
+            request_confirm(event, user_id, "record", "delete_all", {}, "刪除全部記帳記錄")
+            return
+        if text in ("刪除今天", "刪除今日"):
+            request_confirm(event, user_id, "record", "delete_by_date",
+                          {"date": date.today().isoformat()}, f"刪除 {date.today()} 的記錄")
+            return
+        if text == "刪除本月":
+            request_confirm(event, user_id, "record", "delete_by_month",
+                          month_range(date.today().strftime("%Y-%m")),
+                          f"刪除 {date.today().strftime('%Y/%m')} 的記錄")
             return
 
     # ── Everything else → AI agent ──

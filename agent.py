@@ -29,7 +29,16 @@ def agent_parse_todos(user_text: str) -> dict | None:
 3. 如果是刪除待辦，回傳：
 {{ "action": "delete", "ids": [4, 5] }}
 
-4. 如果無法判斷（閒聊、無關內容），回傳：
+4. 如果是刪除全部待辦，回傳：
+{{ "action": "delete_all" }}
+
+5. 如果是刪除某天的待辦，回傳：
+{{ "action": "delete_by_date", "date": "YYYY-MM-DD" }}
+
+6. 如果是刪除某月的待辦，回傳：
+{{ "action": "delete_by_month", "month": "YYYY-MM" }}
+
+7. 如果無法判斷（閒聊、無關內容），回傳：
 {{ "action": "unknown" }}
 
 category 值域：生活 / 工作 / 健康 / 購物 / 娛樂 / 其他
@@ -65,7 +74,16 @@ def agent_parse_transaction(user_text: str) -> dict | None:
 2. 如果是刪除記錄，回傳：
 {{ "action": "delete", "ids": [4, 5] }}
 
-3. 如果無法判斷（閒聊、查詢、無關內容），回傳：
+3. 如果是刪除全部記錄，回傳：
+{{ "action": "delete_all" }}
+
+4. 如果是刪除某天的記錄，回傳：
+{{ "action": "delete_by_date", "date": "YYYY-MM-DD" }}
+
+5. 如果是刪除某月的記錄，回傳：
+{{ "action": "delete_by_month", "month": "YYYY-MM" }}
+
+6. 如果無法判斷（閒聊、查詢、無關內容），回傳：
 {{ "action": "unknown" }}
 
 type 值域：收入 / 支出
