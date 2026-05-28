@@ -1,4 +1,3 @@
-import os
 import re
 import json
 from datetime import datetime, timezone, timedelta
@@ -10,7 +9,7 @@ TZ_TW = timezone(timedelta(hours=8))
 def _today() -> str:
     return datetime.now(TZ_TW).strftime("%Y-%m-%d")
 
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+client = OpenAI()
 
 MODEL = "gpt-5.4-mini"
 
@@ -134,8 +133,10 @@ CHAT_TOOLS = [
                         "description": "搜尋關鍵字"
                     }
                 },
-                "required": ["query"]
-            }
+                "required": ["query"],
+                "additionalProperties": False
+            },
+            "strict": True
         }
     }
 ]

@@ -813,7 +813,9 @@ def handle_chat_message(event, user_id: str, text: str):
 
 # ── App startup ──
 
+print("[startup] Initializing database...")
 init_db()
+print("[startup] App ready")
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
