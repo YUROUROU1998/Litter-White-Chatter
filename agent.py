@@ -189,7 +189,7 @@ def _do_search_and_answer(messages: list, search_results: str) -> str:
         f"搜尋結果：\n{search_results}\n\n請根據以上結果回答我之前的問題。"})
     resp = client.chat.completions.create(
         model=MODEL,
-        max_tokens=500,
+        max_tokens=1500,
         messages=messages,
         temperature=0.7
     )
@@ -206,7 +206,7 @@ def agent_chat(user_text: str, history: list) -> str:
             "涉及天氣、新聞、股價、匯率、即時資訊等問題，你必須使用 web_search 工具搜尋，"
             "絕對不要自己猜測或編造即時資訊。"
             "如果是常識或知識性問題，直接回答即可。"
-            "回答請使用繁體中文，保持簡潔友善，限制300字以內。"
+            "回答請使用繁體中文，保持簡潔友善，限制1000字以內。"
         )}
     ]
     messages.extend(history)
@@ -215,7 +215,7 @@ def agent_chat(user_text: str, history: list) -> str:
     try:
         resp = client.chat.completions.create(
             model=MODEL,
-            max_tokens=500,
+            max_tokens=1500,
             messages=messages,
             tools=CHAT_TOOLS,
             temperature=0.7
@@ -237,7 +237,7 @@ def agent_chat(user_text: str, history: list) -> str:
 
             resp2 = client.chat.completions.create(
                 model=MODEL,
-                max_tokens=500,
+                max_tokens=1500,
                 messages=messages,
                 tools=CHAT_TOOLS,
                 temperature=0.7
