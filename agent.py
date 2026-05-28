@@ -204,7 +204,7 @@ def agent_chat(user_text: str, history: list) -> str:
         {"role": "system", "content": (
             f"你是一個友善的智慧助理。今天日期是 {today}。"
             "你可以回答各種問題，包括生活、料理、旅遊、知識等。"
-            "涉及天氣、新聞、股價、匯率、即時資訊等問題，你必須使用 web_search 工具搜尋，"
+            "涉及天氣、新聞、股價、匯率、即時資訊等問題，你可以使用 web_search 工具搜尋，"
             "絕對不要自己猜測或編造即時資訊。"
             "如果是常識或知識性問題，直接回答即可。"
             "回答請使用繁體中文，保持簡潔友善，限制1000字以內。"
@@ -268,4 +268,4 @@ def agent_chat(user_text: str, history: list) -> str:
 
     except Exception as e:
         print(f"[agent_chat error] user_text={user_text[:50]}, error={e}")
-        return "AI 暫時無法回應，請稍後再試"
+        return f"AI 暫時無法回應：{type(e).__name__}: {e}"
