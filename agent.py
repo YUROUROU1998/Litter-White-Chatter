@@ -145,10 +145,13 @@ def agent_chat(user_text: str, history: list) -> str:
         msg = resp.choices[0].message
 
         if msg.tool_calls:
+            tool_names = [tc.function.name for tc in msg.tool_calls]
+            print(f"[chat debug] tool_calls={tool_names}")
             messages.append(msg)
             for tc in msg.tool_calls:
                 args = json.loads(tc.function.arguments)
                 result = _execute_tool(tc.function.name, args)
+                print(f"[chat debug] tool={tc.function.name}, result_len={len(result)}")
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -161,10 +164,13 @@ def agent_chat(user_text: str, history: list) -> str:
                 messages=messages,
                 temperature=0.7
             )
-            return resp2.choices[0].message.content or "抱歉，我無法回答這個問題"
+            answer = resp2.choices[0].message.content
+            print(f"[chat debug] resp2 content_len={len(answer or '')}, finish={resp2.choices[0].finish_reason}")
+            return answer or f"[debug] resp2 empty, finish={resp2.choices[0].finish_reason}, tools={tool_names}"
 
-        return msg.content or "抱歉，我無法回答這個問題"
+        print(f"[chat debug] no tool_calls, content_len={len(msg.content or '')}, finish={resp.choices[0].finish_reason}")
+        return msg.content or f"[debug] empty content, finish={resp.choices[0].finish_reason}"
 
     except Exception as e:
         print(f"[agent_chat error] user_text={user_text[:50]}, error={e}")
-        return "AI 暫時無法回應，請稍後再試"
+        return f"AI 暫時無法回應：{type(e).__name__}: {e}"
