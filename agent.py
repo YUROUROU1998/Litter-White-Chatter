@@ -1,7 +1,6 @@
 import json
 from datetime import datetime, timezone, timedelta
 from openai import OpenAI
-from duckduckgo_search import DDGS
 
 TZ_TW = timezone(timedelta(hours=8))
 
@@ -81,43 +80,7 @@ def agent_parse_transaction(user_text: str) -> dict | None:
         return None
 
 
-# ── Chat mode: free conversation with tool calling ──
-
-CHAT_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "搜尋網路即時資訊，例如天氣、新聞、股價、最新消息等",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "搜尋關鍵字"
-                    }
-                },
-                "required": ["query"],
-                "additionalProperties": False
-            },
-            "strict": True
-        }
-    }
-]
-
-
-def _execute_tool(name: str, args: dict) -> str:
-    if name == "web_search":
-        try:
-            results = DDGS().text(args["query"], max_results=5, region="tw-tzh")
-            if results:
-                return "\n".join(f"- {r['title']}: {r['body']}" for r in results)
-            return "沒有找到相關結果"
-        except Exception as e:
-            print(f"[web_search error] query={args.get('query')}, error={e}")
-            return "搜尋暫時無法使用"
-    return "未知工具"
-
+# ── Chat mode: free conversation ──
 
 def agent_chat(user_text: str, history: list) -> str:
     today = _today()
@@ -125,9 +88,6 @@ def agent_chat(user_text: str, history: list) -> str:
         {"role": "system", "content": (
             f"你是一個友善的智慧助理。今天日期是 {today}。"
             "你可以回答各種問題，包括生活、料理、旅遊、知識等。"
-            "涉及天氣、新聞、股價、匯率、即時資訊等問題，你可以使用 web_search 工具搜尋，"
-            "絕對不要自己猜測或編造即時資訊。"
-            "如果是常識或知識性問題，直接回答即可。"
             "回答請使用繁體中文，保持簡潔友善，限制1000字以內。"
         )}
     ]
@@ -139,37 +99,9 @@ def agent_chat(user_text: str, history: list) -> str:
             model=MODEL,
             max_completion_tokens=1000,
             messages=messages,
-            tools=CHAT_TOOLS,
             temperature=0.7
         )
-        msg = resp.choices[0].message
-
-        if msg.tool_calls:
-            tool_names = [tc.function.name for tc in msg.tool_calls]
-            print(f"[chat debug] tool_calls={tool_names}")
-            messages.append(msg)
-            for tc in msg.tool_calls:
-                args = json.loads(tc.function.arguments)
-                result = _execute_tool(tc.function.name, args)
-                print(f"[chat debug] tool={tc.function.name}, result_len={len(result)}")
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result
-                })
-
-            resp2 = client.chat.completions.create(
-                model=MODEL,
-                max_completion_tokens=1000,
-                messages=messages,
-                temperature=0.7
-            )
-            answer = resp2.choices[0].message.content
-            print(f"[chat debug] resp2 content_len={len(answer or '')}, finish={resp2.choices[0].finish_reason}")
-            return answer or f"[debug] resp2 empty, finish={resp2.choices[0].finish_reason}, tools={tool_names}"
-
-        print(f"[chat debug] no tool_calls, content_len={len(msg.content or '')}, finish={resp.choices[0].finish_reason}")
-        return msg.content or f"[debug] empty content, finish={resp.choices[0].finish_reason}"
+        return resp.choices[0].message.content or "AI 無法產生回應，請再試一次。"
 
     except Exception as e:
         print(f"[agent_chat error] user_text={user_text[:50]}, error={e}")

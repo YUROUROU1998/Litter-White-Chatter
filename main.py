@@ -660,7 +660,6 @@ HELP_CHAT = (
     "Chat 模式：\n\n"
     "直接輸入任何問題，AI 為你解答\n"
     "支援多輪對話，記得上下文\n"
-    "需要即時資訊時 AI 會自動搜尋\n"
     "切換模式時自動清空對話紀錄"
 )
 
@@ -694,45 +693,32 @@ def handle_message(event):
             return
         pending_confirmations.pop(user_id)
 
-    # ── Global commands ──
-    if text == "#note":
+    # ── Global commands: mode switching ──
+    if text in ("#note", "待辦", "待辦模式"):
         set_user_mode(user_id, "note")
         chat_histories.pop(user_id, None)
         reply(event, f"已切換至 Note 模式\n\n{HELP_NOTE}")
         return
-    if text == "#record":
+    if text in ("#record", "記帳", "記帳模式"):
         set_user_mode(user_id, "record")
         chat_histories.pop(user_id, None)
         reply(event, f"已切換至 Record 模式\n\n{HELP_RECORD}")
         return
-    if text in ("#chat", "#聊天"):
+    if text in ("#chat", "碎碎念", "碎碎念模式"):
         set_user_mode(user_id, "chat")
         chat_histories.pop(user_id, None)
         reply(event, f"已切換至 Chat 模式\n\n{HELP_CHAT}")
         return
-    if text == "說明":
-        help_map = {"note": HELP_NOTE, "record": HELP_RECORD, "chat": HELP_CHAT}
-        reply(event, help_map.get(mode, HELP_CHAT))
-        return
-    if text == "模式":
-        mode_names = {
-            "note": "Note（待辦清單）",
-            "record": "Record（記帳）",
-            "chat": "Chat（AI 聊天）"
-        }
-        mode_name = mode_names.get(mode, mode)
-        reply(event, f"目前模式：{mode_name}\n\n輸入 #note / #record / #chat 切換模式")
-        return
-    if text == "#mode":
+    if text in ("#mode", "查看指令", "說明", "模式"):
         mark = {mode: " ← 目前"}
         reply(event, (
-            f"── #note Note（待辦清單）{mark.get('note', '')} ──\n"
+            f"── 待辦（#note）{mark.get('note', '')} ──\n"
             f"{HELP_NOTE}\n\n"
-            f"── #record Record（記帳）{mark.get('record', '')} ──\n"
+            f"── 記帳（#record）{mark.get('record', '')} ──\n"
             f"{HELP_RECORD}\n\n"
-            f"── #chat Chat（AI 聊天）{mark.get('chat', '')} ──\n"
+            f"── 碎碎念（#chat）{mark.get('chat', '')} ──\n"
             f"{HELP_CHAT}\n\n"
-            "輸入 #note / #record / #chat 切換模式"
+            "切換模式：待辦 / 記帳 / 碎碎念"
         ))
         return
 
