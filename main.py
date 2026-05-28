@@ -794,7 +794,7 @@ def handle_message(event):
 
 # ── Chat mode handler ──
 
-MAX_CHAT_HISTORY = 20
+MAX_CHAT_HISTORY = 10
 
 def handle_chat_message(event, user_id: str, text: str):
     if user_id not in chat_histories:
