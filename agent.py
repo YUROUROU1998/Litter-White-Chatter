@@ -17,7 +17,7 @@ def agent_parse_todos(user_text: str) -> dict | None:
     today = _today()
     resp = client.chat.completions.create(
         model=MODEL,
-        max_tokens=1000,
+        max_completion_tokens=1000,
         messages=[
             {"role": "system", "content": f"""你是待辦事項助理。今天日期是 {today}。
 根據用戶輸入，判斷意圖並回傳 JSON。
@@ -70,7 +70,7 @@ def agent_parse_transaction(user_text: str) -> dict | None:
     today = _today()
     resp = client.chat.completions.create(
         model=MODEL,
-        max_tokens=1000,
+        max_completion_tokens=1000,
         messages=[
             {"role": "system", "content": f"""你是記帳助理。今天日期是 {today}。
 根據用戶輸入，判斷意圖並回傳 JSON。
@@ -190,7 +190,7 @@ def _do_search_and_answer(messages: list, search_results: str) -> str:
         f"搜尋結果：\n{search_results}\n\n請根據以上結果回答我之前的問題。"})
     resp = client.chat.completions.create(
         model=MODEL,
-        max_tokens=1500,
+        max_completion_tokens=1500,
         messages=messages,
         temperature=0.7
     )
@@ -216,7 +216,7 @@ def agent_chat(user_text: str, history: list) -> str:
     try:
         resp = client.chat.completions.create(
             model=MODEL,
-            max_tokens=1500,
+            max_completion_tokens=1500,
             messages=messages,
             tools=CHAT_TOOLS,
             temperature=0.7
@@ -238,7 +238,7 @@ def agent_chat(user_text: str, history: list) -> str:
 
             resp2 = client.chat.completions.create(
                 model=MODEL,
-                max_tokens=1500,
+                max_completion_tokens=1500,
                 messages=messages,
                 tools=CHAT_TOOLS,
                 temperature=0.7
@@ -268,4 +268,4 @@ def agent_chat(user_text: str, history: list) -> str:
 
     except Exception as e:
         print(f"[agent_chat error] user_text={user_text[:50]}, error={e}")
-        return f"AI 暫時無法回應：{type(e).__name__}: {e}"
+        return "AI 暫時無法回應，請稍後再試"
