@@ -10,12 +10,9 @@ TZ_TW = timezone(timedelta(hours=8))
 def _today() -> str:
     return datetime.now(TZ_TW).strftime("%Y-%m-%d")
 
-client = OpenAI(
-    api_key=os.environ["DEEPSEEK_API_KEY"],
-    base_url="https://api.deepseek.com"
-)
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-MODEL = "deepseek-chat"
+MODEL = "gpt-5.4-mini"
 
 def agent_parse_todos(user_text: str) -> dict | None:
     today = _today()
@@ -27,7 +24,7 @@ def agent_parse_todos(user_text: str) -> dict | None:
 根據用戶輸入，判斷意圖並回傳 JSON。
 
 1. 如果是新增待辦，回傳：
-{{ "action": "add", "items": [{{ "title": "動詞開頭繁體中文", "category": "分類", "priority": "優先度", "due_date": "YYYY-MM-DD" }}] }}
+{{ "action": "add", "items": [{{ "title": "動詞開頭繁體中文", "category": "分類", "priority": "優先度", "due_date": "YYYY-MM-DD", "due_time": "HH:MM 或 null" }}] }}
 
 2. 如果是標記完成，回傳：
 {{ "action": "done", "ids": [3, 5] }}
@@ -45,7 +42,7 @@ def agent_parse_todos(user_text: str) -> dict | None:
 {{ "action": "delete_by_month", "month": "YYYY-MM" }}
 
 7. 如果是修改待辦，回傳：
-{{ "action": "edit", "id": 編號, "updates": {{ "title": "新標題", "category": "新分類", "priority": "新優先度", "due_date": "YYYY-MM-DD" }} }}
+{{ "action": "edit", "id": 編號, "updates": {{ "title": "新標題", "category": "新分類", "priority": "新優先度", "due_date": "YYYY-MM-DD", "due_time": "HH:MM" }} }}
 updates 只包含用戶要修改的欄位，不需要全部填寫。
 
 8. 如果無法判斷（閒聊、無關內容），回傳：
@@ -54,6 +51,7 @@ updates 只包含用戶要修改的欄位，不需要全部填寫。
 category 值域：生活 / 工作 / 健康 / 購物 / 娛樂 / 其他
 priority 值域：高 / 中 / 低
 due_date：若無明確日期則填 {today}
+due_time：若有明確時間（如下午3點、15:30、早上9點）填 HH:MM（24小時制），否則填 null
 
 只回傳 JSON，不要任何其他文字。"""},
             {"role": "user", "content": user_text}
@@ -191,7 +189,7 @@ def _do_search_and_answer(messages: list, search_results: str) -> str:
         f"搜尋結果：\n{search_results}\n\n請根據以上結果回答我之前的問題。"})
     resp = client.chat.completions.create(
         model=MODEL,
-        max_tokens=1000,
+        max_tokens=500,
         messages=messages,
         temperature=0.7
     )
@@ -208,7 +206,7 @@ def agent_chat(user_text: str, history: list) -> str:
             "涉及天氣、新聞、股價、匯率、即時資訊等問題，你必須使用 web_search 工具搜尋，"
             "絕對不要自己猜測或編造即時資訊。"
             "如果是常識或知識性問題，直接回答即可。"
-            "回答請使用繁體中文，保持簡潔友善。"
+            "回答請使用繁體中文，保持簡潔友善，限制300字以內。"
         )}
     ]
     messages.extend(history)
@@ -217,7 +215,7 @@ def agent_chat(user_text: str, history: list) -> str:
     try:
         resp = client.chat.completions.create(
             model=MODEL,
-            max_tokens=1000,
+            max_tokens=500,
             messages=messages,
             tools=CHAT_TOOLS,
             temperature=0.7
@@ -239,7 +237,7 @@ def agent_chat(user_text: str, history: list) -> str:
 
             resp2 = client.chat.completions.create(
                 model=MODEL,
-                max_tokens=1000,
+                max_tokens=500,
                 messages=messages,
                 tools=CHAT_TOOLS,
                 temperature=0.7

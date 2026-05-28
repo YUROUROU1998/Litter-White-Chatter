@@ -40,6 +40,13 @@ CATEGORY_EMOJI_RECORD = {
     "醫療": "💊", "薪資": "💼", "獎金": "🎉", "其他": "📌"
 }
 
+PRIORITY_ORDER = "CASE priority WHEN '高' THEN 1 WHEN '中' THEN 2 WHEN '低' THEN 3 ELSE 4 END"
+
+def fmt_todo_date(row):
+    d = row["due_date"].strftime("%m/%d") if row.get("due_date") else ""
+    t = row["due_time"].strftime("%H:%M") if row.get("due_time") else ""
+    return f"{d} {t}".strip()
+
 # ── DB helpers ──
 
 def get_user_mode(user_id: str) -> str:
@@ -170,16 +177,25 @@ def handle_note_natural(event, user_id: str, text: str):
         cur = conn.cursor()
         lines = ["已新增待辦：\n"]
         for t in result.get("items", []):
+            due_time = t.get("due_time") if t.get("due_time") else None
             cur.execute(
-                "INSERT INTO todos (user_id, title, category, priority, due_date) "
-                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (user_id, t["title"], t["category"], t["priority"], t.get("due_date", today_tw().isoformat()))
+                "INSERT INTO todos (user_id, title, category, priority, due_date, due_time) "
+                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (user_id, t["title"], t["category"], t["priority"],
+                 t.get("due_date", today_tw().isoformat()), due_time)
             )
             tid = cur.fetchone()[0]
             p = PRIORITY_EMOJI.get(t["priority"], "")
             c = CATEGORY_EMOJI_NOTE.get(t["category"], "")
+            date_str = t.get("due_date", today_tw().isoformat())
+            try:
+                date_display = datetime.strptime(date_str, "%Y-%m-%d").strftime("%m/%d")
+            except ValueError:
+                date_display = date_str
+            if due_time:
+                date_display += f" {due_time}"
             lines.append(f"{c}{p} #{tid} {t['title']}")
-            lines.append(f"   {t.get('due_date', '今天')}｜{t['category']}｜{t['priority']}")
+            lines.append(f"   {date_display}｜{t['category']}｜{t['priority']}")
         conn.commit()
         cur.close()
         conn.close()
@@ -239,14 +255,15 @@ def handle_note_natural(event, user_id: str, text: str):
         request_confirm(event, user_id, "note", "delete_by_month", month_range(m), f"刪除 {m} 的待辦")
 
     else:
-        reply(event, "無法辨識，請輸入待辦內容或輸入「說明」查看指令")
+        reply(event, "小白要碎碎念～")
 
 
 def handle_note_today(event, user_id: str):
     conn = get_conn()
     cur = get_cursor(conn)
     cur.execute(
-        "SELECT * FROM todos WHERE user_id = %s AND due_date = %s ORDER BY done, priority",
+        f"SELECT * FROM todos WHERE user_id = %s AND due_date = %s "
+        f"ORDER BY done, {PRIORITY_ORDER}, due_time NULLS LAST",
         (user_id, today_tw())
     )
     rows = cur.fetchall()
@@ -259,14 +276,16 @@ def handle_note_today(event, user_id: str):
 
     undone = [r for r in rows if not r["done"]]
     done = [r for r in rows if r["done"]]
+    today_str = today_tw().strftime("%m/%d")
 
-    lines = [f"今日待辦（{today_tw()}）\n"]
+    lines = [f"今日待辦（{today_str}）\n"]
     if undone:
         lines.append("── 未完成 ──")
         for r in undone:
             p = PRIORITY_EMOJI.get(r["priority"], "")
             c = CATEGORY_EMOJI_NOTE.get(r["category"], "")
-            lines.append(f"{c}{p} #{r['id']} {r['title']}")
+            time_str = f" {r['due_time'].strftime('%H:%M')}" if r.get("due_time") else ""
+            lines.append(f"{c}{p} #{r['id']} {r['title']}{time_str}")
     if done:
         lines.append("\n── 已完成 ──")
         for r in done:
@@ -280,8 +299,8 @@ def handle_note_week(event, user_id: str):
     conn = get_conn()
     cur = get_cursor(conn)
     cur.execute(
-        "SELECT * FROM todos WHERE user_id = %s AND done = FALSE AND due_date >= %s "
-        "ORDER BY due_date, priority",
+        f"SELECT * FROM todos WHERE user_id = %s AND done = FALSE AND due_date >= %s "
+        f"ORDER BY due_date, {PRIORITY_ORDER}, due_time NULLS LAST",
         (user_id, today_tw())
     )
     rows = cur.fetchall()
@@ -297,7 +316,7 @@ def handle_note_week(event, user_id: str):
         p = PRIORITY_EMOJI.get(r["priority"], "")
         c = CATEGORY_EMOJI_NOTE.get(r["category"], "")
         lines.append(f"{c}{p} #{r['id']} {r['title']}")
-        lines.append(f"   {r['due_date']}")
+        lines.append(f"   {fmt_todo_date(r)}")
     reply(event, "\n".join(lines))
 
 
@@ -344,7 +363,7 @@ def handle_note_edit(event, user_id: str, todo_id: int, updates: dict):
         reply(event, f"找不到待辦 #{todo_id}")
         return
 
-    allowed = {"title", "category", "priority", "due_date"}
+    allowed = {"title", "category", "priority", "due_date", "due_time"}
     fields = {k: v for k, v in updates.items() if k in allowed and v}
     if not fields:
         cur.close()
@@ -364,11 +383,12 @@ def handle_note_edit(event, user_id: str, todo_id: int, updates: dict):
 
     p = PRIORITY_EMOJI.get(updated["priority"], "")
     c = CATEGORY_EMOJI_NOTE.get(updated["category"], "")
-    changed = "、".join({"title": "標題", "category": "分類", "priority": "優先度", "due_date": "日期"}.get(k, k) for k in fields)
+    field_names = {"title": "標題", "category": "分類", "priority": "優先度", "due_date": "日期", "due_time": "時間"}
+    changed = "、".join(field_names.get(k, k) for k in fields)
     reply(event, (
         f"已修改 #{todo_id}（{changed}）\n\n"
         f"{c}{p} {updated['title']}\n"
-        f"{updated['due_date']}｜{updated['category']}｜{updated['priority']}"
+        f"{fmt_todo_date(updated)}｜{updated['category']}｜{updated['priority']}"
     ))
 
 

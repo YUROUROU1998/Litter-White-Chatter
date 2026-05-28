@@ -45,6 +45,9 @@ def init_db():
     cur.execute("""
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_date DATE DEFAULT CURRENT_DATE;
     """)
+    cur.execute("""
+        ALTER TABLE todos ADD COLUMN IF NOT EXISTS due_time TIME DEFAULT NULL;
+    """)
     conn.commit()
     cur.close()
     conn.close()
