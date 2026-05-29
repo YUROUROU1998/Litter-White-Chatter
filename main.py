@@ -946,40 +946,45 @@ def generate_daily_summary(user_id: str) -> str | None:
 
 @app.route("/cron/daily-summary", methods=["POST", "GET"])
 def cron_daily_summary():
-    # Verify cron secret
+    # Verify cron secret — return plain text (not abort) to avoid large HTML
     secret = os.environ.get("CRON_SECRET", "")
     provided = request.headers.get("X-Cron-Secret") or request.args.get("secret", "")
     if not secret or provided != secret:
-        abort(403)
+        return "FORBIDDEN", 403
 
-    now_tw = datetime.now(TZ_TW)
-    current_hour = now_tw.hour
-    current_minute = now_tw.minute
+    try:
+        now_tw = datetime.now(TZ_TW)
+        current_hour = now_tw.hour
+        current_minute = now_tw.minute
 
-    conn = get_conn()
-    cur = get_cursor(conn)
-    cur.execute(
-        "SELECT user_id, push_time FROM user_state WHERE push_time IS NOT NULL"
-    )
-    users = cur.fetchall()
-    cur.close()
-    conn.close()
+        conn = get_conn()
+        cur = get_cursor(conn)
+        cur.execute(
+            "SELECT user_id, push_time FROM user_state WHERE push_time IS NOT NULL"
+        )
+        users = cur.fetchall()
+        cur.close()
+        conn.close()
 
-    sent = 0
-    for u in users:
-        pt = u["push_time"]
-        # Match within 30-minute window (for hourly cron)
-        if pt.hour == current_hour and abs(pt.minute - current_minute) <= 30:
-            summary = generate_daily_summary(u["user_id"])
-            if summary:
-                try:
-                    push_message(u["user_id"], summary)
-                    sent += 1
-                except Exception as e:
-                    print(f"[push error] user={u['user_id']}, error={e}")
+        sent = 0
+        for u in users:
+            pt = u["push_time"]
+            # Match within 30-minute window (for hourly cron)
+            if pt.hour == current_hour and abs(pt.minute - current_minute) <= 30:
+                summary = generate_daily_summary(u["user_id"])
+                if summary:
+                    try:
+                        push_message(u["user_id"], summary)
+                        sent += 1
+                    except Exception as e:
+                        print(f"[push error] user={u['user_id']}, error={e}")
 
-    print(f"[cron] daily summary sent to {sent} users at {now_tw.strftime('%H:%M')}")
-    return f"OK sent={sent}", 200
+        print(f"[cron] daily summary sent to {sent} users at {now_tw.strftime('%H:%M')}")
+        return f"OK sent={sent}", 200
+
+    except Exception as e:
+        print(f"[cron error] {type(e).__name__}: {e}")
+        return f"ERROR {type(e).__name__}", 500
 
 
 # ── App startup ──
