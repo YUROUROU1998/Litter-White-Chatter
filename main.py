@@ -1033,6 +1033,40 @@ def cron_daily_summary():
         return f"ERROR {type(e).__name__}", 500
 
 
+@app.route("/cron/test-push", methods=["GET"])
+def test_push():
+    secret = os.environ.get("CRON_SECRET", "")
+    provided = request.args.get("secret", "")
+    if not secret or provided != secret:
+        return "FORBIDDEN", 403
+
+    try:
+        conn = get_conn()
+        cur = get_cursor(conn)
+        cur.execute("SELECT user_id, push_time FROM user_state WHERE push_time IS NOT NULL")
+        users = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not users:
+            return "NO_USERS_WITH_PUSH_TIME", 200
+
+        results = []
+        for u in users:
+            uid = u["user_id"]
+            summary = generate_daily_summary(uid)
+            try:
+                push_message(uid, summary or "test push")
+                results.append(f"OK uid={uid[:10]}... push_time={u['push_time']}")
+            except Exception as e:
+                results.append(f"FAIL uid={uid[:10]}... error={type(e).__name__}: {e}")
+
+        return "\n".join(results), 200
+
+    except Exception as e:
+        return f"ERROR {type(e).__name__}: {e}", 500
+
+
 # ── App startup ──
 
 print("[startup] Initializing database...")
