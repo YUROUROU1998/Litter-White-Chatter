@@ -898,7 +898,53 @@ def generate_daily_summary(user_id: str) -> str | None:
     conn.close()
 
     if not todos and not txs:
-        return None
+        # No records today — fetch recent upcoming todos and recent transactions
+        conn2 = get_conn()
+        cur2 = get_cursor(conn2)
+
+        # Upcoming undone todos (nearest due_date first, max 5)
+        cur2.execute(
+            f"SELECT * FROM todos WHERE user_id = %s AND done = FALSE AND due_date >= %s "
+            f"ORDER BY due_date, {PRIORITY_ORDER}, due_time NULLS LAST LIMIT 5",
+            (user_id, today)
+        )
+        upcoming_todos = cur2.fetchall()
+
+        # Recent transactions (newest first, max 5)
+        cur2.execute(
+            "SELECT * FROM transactions WHERE user_id = %s "
+            "ORDER BY tx_date DESC, created_at DESC LIMIT 5",
+            (user_id,)
+        )
+        recent_txs = cur2.fetchall()
+        cur2.close()
+        conn2.close()
+
+        lines = [f"今日總結（{today_str}）\n", "今天沒有新的待辦或記帳紀錄\n"]
+
+        if upcoming_todos:
+            lines.append("── 近期待辦 ──")
+            for r in upcoming_todos:
+                p = PRIORITY_EMOJI.get(r["priority"], "")
+                c = CATEGORY_EMOJI_NOTE.get(r["category"], "")
+                d = r["due_date"].strftime("%m/%d")
+                time_str = f" {r['due_time'].strftime('%H:%M')}" if r.get("due_time") else ""
+                lines.append(f"  {c}{p} #{r['id']} {r['title']}（{d}{time_str}）")
+
+        if recent_txs:
+            if upcoming_todos:
+                lines.append("")
+            lines.append("── 近期收支 ──")
+            for r in recent_txs:
+                emoji = CATEGORY_EMOJI_RECORD.get(r["category"], "")
+                d = r["tx_date"].strftime("%m/%d")
+                sign = "-" if r["type"] == "支出" else "+"
+                lines.append(f"  {emoji} {d} {r['description']} {sign}${r['amount']:,}")
+
+        if not upcoming_todos and not recent_txs:
+            lines.append("目前沒有任何紀錄，開始使用待辦或記帳功能吧！")
+
+        return "\n".join(lines)
 
     lines = [f"今日總結（{today_str}）\n"]
 
