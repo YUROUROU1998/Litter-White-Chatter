@@ -48,6 +48,9 @@ def init_db():
     cur.execute("""
         ALTER TABLE todos ADD COLUMN IF NOT EXISTS due_time TIME DEFAULT NULL;
     """)
+    cur.execute("""
+        ALTER TABLE user_state ADD COLUMN IF NOT EXISTS push_time TIME DEFAULT NULL;
+    """)
     conn.commit()
     cur.close()
     conn.close()

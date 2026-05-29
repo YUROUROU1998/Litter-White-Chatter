@@ -5,8 +5,10 @@ load_dotenv()
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.messaging import (
-    Configuration, ApiClient, MessagingApi, ReplyMessageRequest, TextMessage
+    Configuration, ApiClient, MessagingApi,
+    ReplyMessageRequest, PushMessageRequest, TextMessage
 )
+import re
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from linebot.v3.exceptions import InvalidSignatureError
 
@@ -87,6 +89,51 @@ def reply(event, text: str):
                 messages=[TextMessage(text=text)]
             )
         )
+
+def push_message(user_id: str, text: str):
+    with ApiClient(config) as api_client:
+        MessagingApi(api_client).push_message(
+            PushMessageRequest(
+                to=user_id,
+                messages=[TextMessage(text=text)]
+            )
+        )
+
+# ── Push time helpers ──
+
+def set_push_time(user_id: str, time_str: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE user_state SET push_time = %s WHERE user_id = %s",
+        (time_str, user_id)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def clear_push_time(user_id: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE user_state SET push_time = NULL WHERE user_id = %s",
+        (user_id,)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_push_time(user_id: str):
+    conn = get_conn()
+    cur = get_cursor(conn)
+    cur.execute("SELECT push_time FROM user_state WHERE user_id = %s", (user_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row["push_time"] if row and row["push_time"] else None
+
 
 # ── Bulk delete confirmation ──
 
@@ -718,8 +765,35 @@ def handle_message(event):
             f"{HELP_RECORD}\n\n"
             f"── 碎碎念（#chat）{mark.get('chat', '')} ──\n"
             f"{HELP_CHAT}\n\n"
+            "── 每日推送 ──\n"
+            "設定推送 HH:MM → 開啟每日總結\n"
+            "取消推送 → 關閉推送\n"
+            "推送狀態 → 查看目前設定\n\n"
             "切換模式：待辦 / 記帳 / 碎碎念"
         ))
+        return
+
+    # ── Push time commands ──
+    push_match = re.match(r"(?:設定推送|推送時間)\s*(\d{1,2})[：:](\d{2})", text)
+    if push_match:
+        h, m = int(push_match.group(1)), int(push_match.group(2))
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            time_str = f"{h:02d}:{m:02d}"
+            set_push_time(user_id, time_str)
+            reply(event, f"已設定每日推送時間：{time_str}\n每天 {time_str} 會收到待辦與記帳總結\n\n輸入「取消推送」可關閉")
+        else:
+            reply(event, "時間格式不正確，請輸入 00:00~23:59\n例如：設定推送 21:00")
+        return
+    if text == "取消推送":
+        clear_push_time(user_id)
+        reply(event, "已取消每日推送")
+        return
+    if text == "推送狀態":
+        pt = get_push_time(user_id)
+        if pt:
+            reply(event, f"目前推送時間：{pt.strftime('%H:%M')}\n\n輸入「取消推送」可關閉")
+        else:
+            reply(event, "目前未設定推送\n\n輸入「設定推送 21:00」開啟每日總結")
         return
 
     # ── Exact keyword shortcuts ──
@@ -796,6 +870,117 @@ def handle_chat_message(event, user_id: str, text: str):
         chat_histories[user_id] = history[-MAX_CHAT_HISTORY:]
 
     reply(event, response)
+
+# ── Daily summary push ──
+
+def generate_daily_summary(user_id: str) -> str | None:
+    today = today_tw()
+    today_str = today.strftime("%m/%d")
+    conn = get_conn()
+    cur = get_cursor(conn)
+
+    # Todos for today
+    cur.execute(
+        f"SELECT * FROM todos WHERE user_id = %s AND due_date = %s "
+        f"ORDER BY done, {PRIORITY_ORDER}, due_time NULLS LAST",
+        (user_id, today)
+    )
+    todos = cur.fetchall()
+
+    # Transactions for today
+    cur.execute(
+        "SELECT * FROM transactions WHERE user_id = %s AND tx_date = %s "
+        "ORDER BY created_at",
+        (user_id, today)
+    )
+    txs = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    if not todos and not txs:
+        return None
+
+    lines = [f"今日總結（{today_str}）\n"]
+
+    # Todo section
+    if todos:
+        undone = [r for r in todos if not r["done"]]
+        done = [r for r in todos if r["done"]]
+        lines.append("── 待辦事項 ──")
+        if undone:
+            lines.append(f"未完成：{len(undone)} 項")
+            for r in undone:
+                p = PRIORITY_EMOJI.get(r["priority"], "")
+                c = CATEGORY_EMOJI_NOTE.get(r["category"], "")
+                time_str = f" {r['due_time'].strftime('%H:%M')}" if r.get("due_time") else ""
+                lines.append(f"  {c}{p} #{r['id']} {r['title']}{time_str}")
+        if done:
+            lines.append(f"已完成：{len(done)} 項")
+
+    # Transaction section
+    if txs:
+        if todos:
+            lines.append("")
+        lines.append("── 今日收支 ──")
+        expense_total = 0
+        income_total = 0
+        expense_lines = []
+        income_lines = []
+        for r in txs:
+            emoji = CATEGORY_EMOJI_RECORD.get(r["category"], "")
+            if r["type"] == "支出":
+                expense_total += r["amount"]
+                expense_lines.append(f"  {emoji} {r['description']} ${r['amount']:,}")
+            else:
+                income_total += r["amount"]
+                income_lines.append(f"  {emoji} {r['description']} ${r['amount']:,}")
+        if expense_lines:
+            lines.append(f"支出 {len(expense_lines)} 筆：${expense_total:,}")
+            lines.extend(expense_lines)
+        if income_lines:
+            lines.append(f"收入 {len(income_lines)} 筆：${income_total:,}")
+            lines.extend(income_lines)
+
+    return "\n".join(lines)
+
+
+@app.route("/cron/daily-summary", methods=["POST", "GET"])
+def cron_daily_summary():
+    # Verify cron secret
+    secret = os.environ.get("CRON_SECRET", "")
+    provided = request.headers.get("X-Cron-Secret") or request.args.get("secret", "")
+    if not secret or provided != secret:
+        abort(403)
+
+    now_tw = datetime.now(TZ_TW)
+    current_hour = now_tw.hour
+    current_minute = now_tw.minute
+
+    conn = get_conn()
+    cur = get_cursor(conn)
+    cur.execute(
+        "SELECT user_id, push_time FROM user_state WHERE push_time IS NOT NULL"
+    )
+    users = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    sent = 0
+    for u in users:
+        pt = u["push_time"]
+        # Match within 30-minute window (for hourly cron)
+        if pt.hour == current_hour and abs(pt.minute - current_minute) <= 30:
+            summary = generate_daily_summary(u["user_id"])
+            if summary:
+                try:
+                    push_message(u["user_id"], summary)
+                    sent += 1
+                except Exception as e:
+                    print(f"[push error] user={u['user_id']}, error={e}")
+
+    print(f"[cron] daily summary sent to {sent} users at {now_tw.strftime('%H:%M')}")
+    return f"OK sent={sent}", 200
+
 
 # ── App startup ──
 
