@@ -1,0 +1,137 @@
+LINE Bot 智慧筆記與記帳助理 — 技術架構總覽
+=============================================
+
+專案名稱：Litter White Chatter（小白碎碎念）
+GitHub：https://github.com/YUROUROU1998/Litter-White-Chatter.git
+線上 URL：（Railway 部署）
+
+
+一、程式語言與框架
+------------------
+語言：Python
+Web 框架：Flask
+WSGI Server：Gunicorn
+  啟動指令：gunicorn main:app --preload --capture-output --log-level debug
+
+
+二、資料庫
+----------
+資料庫：PostgreSQL（由 Neon 提供 Serverless PostgreSQL）
+Python Driver：psycopg2-binary
+連線方式：透過環境變數 DATABASE_URL（Neon 連線字串）
+
+資料表：
+  - user_state：使用者狀態（模式切換、推送時間、活躍帳套）
+      欄位：user_id (PK), mode, updated_at, push_time, active_account_set_id
+  - todos：待辦事項
+      欄位：id, user_id, title, category, priority, due_date, due_time, done, created_at
+  - transactions：記帳紀錄
+      欄位：id, user_id, type, category, amount, description, tx_date, account_set_id, created_at
+  - account_sets：帳套
+      欄位：id, user_id, name, currency, created_at
+
+
+三、部署平台
+------------
+平台：Railway
+部署方式：Git push 自動部署（連結 GitHub repo）
+執行檔：Procfile（web dyno）
+特點：無休眠機制、自動偵測 Python 環境
+
+
+四、AI / LLM
+-------------
+服務：OpenAI API
+模型：gpt-5.4-mini
+Python SDK：openai
+用途：
+  - 待辦事項解析（自然語言 → JSON）
+  - 記帳解析（自然語言 → JSON）
+  - 聊天模式（自由對話）
+參數：
+  - temperature: 0.3（結構化解析）/ 0.7（聊天）
+  - max_completion_tokens: 500（解析）/ 1000（聊天）
+
+
+五、通訊平台
+------------
+平台：LINE Messaging API v3
+SDK：line-bot-sdk（Python）
+功能：
+  - Webhook 接收訊息
+  - ReplyMessage：被動回覆
+  - PushMessage：主動推送（每日摘要）
+認證：
+  - LINE_CHANNEL_SECRET（簽名驗證）
+  - LINE_CHANNEL_ACCESS_TOKEN（API 呼叫）
+
+
+六、排程與定時任務
+------------------
+服務：cron-job.org（外部免費排程服務）
+頻率：每小時觸發一次
+端點：GET /cron/daily-summary?secret=<CRON_SECRET>
+機制：
+  - cron-job.org 每小時呼叫端點
+  - 伺服器比對當前時間與使用者設定的 push_time
+  - 在 30 分鐘窗口內匹配的使用者會收到推送
+  - 推送內容：當日待辦摘要 + 當日收支摘要
+安全性：CRON_SECRET 環境變數驗證
+使用者指令：
+  - 「設定推送 HH:MM」/ 「推送時間 HH:MM」→ 設定推送時間
+  - 「取消推送」→ 關閉推送
+  - 「推送狀態」→ 查看目前設定
+
+
+七、環境變數
+------------
+LINE_CHANNEL_SECRET        LINE 驗證密鑰
+LINE_CHANNEL_ACCESS_TOKEN  LINE API Token
+OPENAI_API_KEY             OpenAI API 金鑰
+DATABASE_URL               Neon PostgreSQL 連線字串
+CRON_SECRET                排程端點驗證密鑰
+
+
+八、主要依賴套件
+----------------
+flask==3.1.1               Web 框架
+gunicorn==23.0.0           WSGI Server
+line-bot-sdk==3.23.0       LINE SDK
+openai==1.82.0             OpenAI SDK
+psycopg2-binary==2.9.10    PostgreSQL Driver
+python-dotenv==1.1.0       環境變數載入
+
+
+九、專案檔案結構
+----------------
+line-bot/
+  main.py              主程式（Flask routes、LINE webhook handler、所有業務邏輯）
+  agent.py             AI 代理（OpenAI 呼叫、prompt 定義）
+  db.py                資料庫連線與初始化（建表、遷移）
+  requirements.txt     Python 依賴
+  Procfile             Railway 啟動設定
+  .env.example         環境變數範例
+
+
+十、功能模式
+------------
+1. 待辦模式（#note / 待辦 / 待辦模式）
+   - 新增、完成、刪除、編輯待辦事項
+   - 支援分類、優先度、到期日、到期時間
+   - 支援批次刪除（按日期/月份/全部）
+
+2. 記帳模式（#record / 記帳 / 記帳模式）
+   - 新增、刪除、編輯收支紀錄
+   - 支援分類（餐飲/交通/娛樂/購物/醫療/薪資/獎金/其他）
+   - 月報表功能
+   - 帳套管理：多帳套、多幣別支援（TWD/USD/EUR/JPY 等）
+
+3. 聊天模式（#chat / 碎碎念 / 碎碎念模式）
+   - 自由對話，AI 回答各種問題
+   - 保留對話歷史（同模式內）
+
+4. 共通指令
+   - 查看指令 / 說明 / 模式 → 顯示所有指令說明
+   - 推送設定相關指令
+   - 帳套管理指令（新增/切換/列表/刪除）
+   - 叫「小白」→ 任何模式下都會回應

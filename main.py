@@ -13,7 +13,7 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from linebot.v3.exceptions import InvalidSignatureError
 
 from db import get_conn, get_cursor, init_db
-from agent import agent_parse_todos, agent_parse_transaction, agent_chat
+from agent import agent_parse_todos, agent_parse_transaction, agent_chat, agent_parse_account_set
 from datetime import date, datetime, timedelta, timezone
 
 TZ_TW = timezone(timedelta(hours=8))
@@ -41,6 +41,16 @@ CATEGORY_EMOJI_RECORD = {
     "餐飲": "🍜", "交通": "🚇", "娛樂": "🎮", "購物": "🛍️",
     "醫療": "💊", "薪資": "💼", "獎金": "🎉", "其他": "📌"
 }
+
+CURRENCY_SYMBOL = {
+    "TWD": "NT$", "USD": "$", "EUR": "€", "JPY": "¥",
+    "GBP": "£", "KRW": "₩", "CNY": "¥", "HKD": "HK$",
+    "THB": "฿", "SGD": "S$", "AUD": "A$", "CAD": "C$",
+}
+
+def currency_fmt(amount: int, currency: str = "TWD") -> str:
+    symbol = CURRENCY_SYMBOL.get(currency, currency + " ")
+    return f"{symbol}{amount:,}"
 
 PRIORITY_ORDER = "CASE priority WHEN '高' THEN 1 WHEN '中' THEN 2 WHEN '低' THEN 3 ELSE 4 END"
 
@@ -133,6 +143,105 @@ def get_push_time(user_id: str):
     cur.close()
     conn.close()
     return row["push_time"] if row and row["push_time"] else None
+
+
+# ── Account set helpers ──
+
+def get_active_account_set(user_id: str) -> dict | None:
+    """Get user's active account set. Returns dict with id, name, currency or None."""
+    conn = get_conn()
+    cur = get_cursor(conn)
+    cur.execute("SELECT active_account_set_id FROM user_state WHERE user_id = %s", (user_id,))
+    row = cur.fetchone()
+    if not row or not row["active_account_set_id"]:
+        cur.close()
+        conn.close()
+        return None
+    cur.execute("SELECT * FROM account_sets WHERE id = %s AND user_id = %s",
+                (row["active_account_set_id"], user_id))
+    aset = cur.fetchone()
+    cur.close()
+    conn.close()
+    return aset
+
+
+def get_account_set_currency(user_id: str) -> str:
+    """Get currency of active account set, default TWD."""
+    aset = get_active_account_set(user_id)
+    return aset["currency"] if aset else "TWD"
+
+
+def list_account_sets(user_id: str) -> list:
+    conn = get_conn()
+    cur = get_cursor(conn)
+    cur.execute("SELECT * FROM account_sets WHERE user_id = %s ORDER BY created_at", (user_id,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def create_account_set(user_id: str, name: str, currency: str) -> int:
+    currency = currency.upper()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO account_sets (user_id, name, currency) VALUES (%s, %s, %s) RETURNING id",
+        (user_id, name, currency)
+    )
+    set_id = cur.fetchone()[0]
+    # Auto-activate new account set
+    cur.execute(
+        "UPDATE user_state SET active_account_set_id = %s WHERE user_id = %s",
+        (set_id, user_id)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return set_id
+
+
+def switch_account_set(user_id: str, name: str) -> dict | None:
+    conn = get_conn()
+    cur = get_cursor(conn)
+    cur.execute("SELECT * FROM account_sets WHERE user_id = %s AND name = %s", (user_id, name))
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
+        return None
+    cur.execute("UPDATE user_state SET active_account_set_id = %s WHERE user_id = %s",
+                (row["id"], user_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return row
+
+
+def delete_account_set(user_id: str, name: str) -> bool:
+    conn = get_conn()
+    cur = get_cursor(conn)
+    cur.execute("SELECT id FROM account_sets WHERE user_id = %s AND name = %s", (user_id, name))
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
+        return False
+    set_id = row["id"]
+    # Clear active if deleting active set
+    cur.execute(
+        "UPDATE user_state SET active_account_set_id = NULL "
+        "WHERE user_id = %s AND active_account_set_id = %s",
+        (user_id, set_id)
+    )
+    # Delete related transactions
+    cur.execute("DELETE FROM transactions WHERE account_set_id = %s AND user_id = %s",
+                (set_id, user_id))
+    cur.execute("DELETE FROM account_sets WHERE id = %s AND user_id = %s", (set_id, user_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return True
 
 
 # ── Bulk delete confirmation ──
@@ -453,13 +562,17 @@ def handle_record_natural(event, user_id: str, text: str):
     action = result.get("action", "unknown")
 
     if action == "add":
+        aset = get_active_account_set(user_id)
+        aset_id = aset["id"] if aset else None
+        cur_code = aset["currency"] if aset else "TWD"
+
         conn = get_conn()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO transactions (user_id, type, category, amount, description, tx_date) "
-            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            "INSERT INTO transactions (user_id, type, category, amount, description, tx_date, account_set_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (user_id, result["type"], result["category"], result["amount"], result["description"],
-             result.get("tx_date", today_tw().isoformat()))
+             result.get("tx_date", today_tw().isoformat()), aset_id)
         )
         tid = cur.fetchone()[0]
         conn.commit()
@@ -468,11 +581,12 @@ def handle_record_natural(event, user_id: str, text: str):
 
         emoji = CATEGORY_EMOJI_RECORD.get(result["category"], "")
         tx_date = result.get("tx_date", today_tw().isoformat())
+        aset_label = f"\n帳套：{aset['name']}" if aset else ""
         reply(event, (
             f"已記錄 #{tid}\n\n"
             f"{emoji} {result['category']}｜{result['type']}\n"
-            f"${result['amount']:,}\n"
-            f"{tx_date}\n"
+            f"{currency_fmt(result['amount'], cur_code)}\n"
+            f"{tx_date}{aset_label}\n"
             f"{result['description']}"
         ))
 
@@ -517,13 +631,24 @@ def handle_record_natural(event, user_id: str, text: str):
 
 
 def handle_record_balance(event, user_id: str):
+    aset = get_active_account_set(user_id)
+    aset_id = aset["id"] if aset else None
+    cur_code = aset["currency"] if aset else "TWD"
+
     conn = get_conn()
     cur = get_cursor(conn)
-    cur.execute(
-        "SELECT type, COALESCE(SUM(amount), 0) AS total "
-        "FROM transactions WHERE user_id = %s GROUP BY type",
-        (user_id,)
-    )
+    if aset_id:
+        cur.execute(
+            "SELECT type, COALESCE(SUM(amount), 0) AS total "
+            "FROM transactions WHERE user_id = %s AND account_set_id = %s GROUP BY type",
+            (user_id, aset_id)
+        )
+    else:
+        cur.execute(
+            "SELECT type, COALESCE(SUM(amount), 0) AS total "
+            "FROM transactions WHERE user_id = %s AND account_set_id IS NULL GROUP BY type",
+            (user_id,)
+        )
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -538,26 +663,39 @@ def handle_record_balance(event, user_id: str):
     balance = income - expense
     b_sign = "+" if balance >= 0 else ""
 
+    title = f"帳戶總覽（{aset['name']}｜{cur_code}）" if aset else "帳戶總覽"
     reply(event, (
-        f"帳戶總覽\n\n"
-        f"總收入：${income:,}\n"
-        f"總支出：${expense:,}\n"
-        f"結餘：{b_sign}${balance:,}"
+        f"{title}\n\n"
+        f"總收入：{currency_fmt(income, cur_code)}\n"
+        f"總支出：{currency_fmt(expense, cur_code)}\n"
+        f"結餘：{b_sign}{currency_fmt(balance, cur_code)}"
     ))
 
 
 def handle_record_monthly(event, user_id: str):
+    aset = get_active_account_set(user_id)
+    aset_id = aset["id"] if aset else None
+    cur_code = aset["currency"] if aset else "TWD"
+
     conn = get_conn()
     cur = get_cursor(conn)
     today = today_tw()
     month_start = today.replace(day=1)
 
-    cur.execute(
-        "SELECT type, category, COALESCE(SUM(amount), 0) AS total "
-        "FROM transactions WHERE user_id = %s AND tx_date >= %s "
-        "GROUP BY type, category ORDER BY type, total DESC",
-        (user_id, month_start)
-    )
+    if aset_id:
+        cur.execute(
+            "SELECT type, category, COALESCE(SUM(amount), 0) AS total "
+            "FROM transactions WHERE user_id = %s AND tx_date >= %s AND account_set_id = %s "
+            "GROUP BY type, category ORDER BY type, total DESC",
+            (user_id, month_start, aset_id)
+        )
+    else:
+        cur.execute(
+            "SELECT type, category, COALESCE(SUM(amount), 0) AS total "
+            "FROM transactions WHERE user_id = %s AND tx_date >= %s AND account_set_id IS NULL "
+            "GROUP BY type, category ORDER BY type, total DESC",
+            (user_id, month_start)
+        )
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -575,35 +713,48 @@ def handle_record_monthly(event, user_id: str):
         emoji = CATEGORY_EMOJI_RECORD.get(r["category"], "")
         if r["type"] == "支出":
             expense_total += r["total"]
-            expense_lines.append(f"{emoji} {r['category']}：${r['total']:,}")
+            expense_lines.append(f"{emoji} {r['category']}：{currency_fmt(r['total'], cur_code)}")
         else:
             income_total += r["total"]
-            income_lines.append(f"{emoji} {r['category']}：${r['total']:,}")
+            income_lines.append(f"{emoji} {r['category']}：{currency_fmt(r['total'], cur_code)}")
 
     balance = income_total - expense_total
     b_sign = "+" if balance >= 0 else ""
 
-    lines = [f"{today.year}/{today.month} 月報\n"]
+    title = f"{today.year}/{today.month} 月報（{aset['name']}）" if aset else f"{today.year}/{today.month} 月報"
+    lines = [f"{title}\n"]
     if expense_lines:
         lines.append("── 支出 ──")
         lines.extend(expense_lines)
-        lines.append(f"小計：${expense_total:,}\n")
+        lines.append(f"小計：{currency_fmt(expense_total, cur_code)}\n")
     if income_lines:
         lines.append("── 收入 ──")
         lines.extend(income_lines)
-        lines.append(f"小計：${income_total:,}\n")
-    lines.append(f"本月結餘：{b_sign}${balance:,}")
+        lines.append(f"小計：{currency_fmt(income_total, cur_code)}\n")
+    lines.append(f"本月結餘：{b_sign}{currency_fmt(balance, cur_code)}")
 
     reply(event, "\n".join(lines))
 
 
 def handle_record_recent(event, user_id: str):
+    aset = get_active_account_set(user_id)
+    aset_id = aset["id"] if aset else None
+    cur_code = aset["currency"] if aset else "TWD"
+
     conn = get_conn()
     cur = get_cursor(conn)
-    cur.execute(
-        "SELECT * FROM transactions WHERE user_id = %s ORDER BY created_at DESC LIMIT 10",
-        (user_id,)
-    )
+    if aset_id:
+        cur.execute(
+            "SELECT * FROM transactions WHERE user_id = %s AND account_set_id = %s "
+            "ORDER BY created_at DESC LIMIT 10",
+            (user_id, aset_id)
+        )
+    else:
+        cur.execute(
+            "SELECT * FROM transactions WHERE user_id = %s AND account_set_id IS NULL "
+            "ORDER BY created_at DESC LIMIT 10",
+            (user_id,)
+        )
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -612,12 +763,13 @@ def handle_record_recent(event, user_id: str):
         reply(event, "目前還沒有任何記錄")
         return
 
-    lines = ["最近 10 筆記錄\n"]
+    title = f"最近 10 筆記錄（{aset['name']}）" if aset else "最近 10 筆記錄"
+    lines = [f"{title}\n"]
     for r in rows:
         emoji = CATEGORY_EMOJI_RECORD.get(r["category"], "")
         t = "+" if r["type"] == "收入" else "-"
         d = r["tx_date"].strftime("%m/%d") if r["tx_date"] else r["created_at"].strftime("%m/%d")
-        lines.append(f"#{r['id']} {d} {emoji} {t}${r['amount']:,} {r['description']}")
+        lines.append(f"#{r['id']} {d} {emoji} {t}{currency_fmt(r['amount'], cur_code)} {r['description']}")
     lines.append("\n輸入「刪 編號」可刪除記錄")
 
     reply(event, "\n".join(lines))
@@ -667,13 +819,14 @@ def handle_record_edit(event, user_id: str, tx_id: int, updates: dict):
     cur.close()
     conn.close()
 
+    cur_code = get_account_set_currency(user_id)
     emoji = CATEGORY_EMOJI_RECORD.get(updated["category"], "")
     field_names = {"type": "類型", "category": "分類", "amount": "金額", "description": "描述", "tx_date": "日期"}
     changed = "、".join(field_names.get(k, k) for k in fields)
     reply(event, (
         f"已修改 #{tx_id}（{changed}）\n\n"
         f"{emoji} {updated['category']}｜{updated['type']}\n"
-        f"${updated['amount']:,}\n"
+        f"{currency_fmt(updated['amount'], cur_code)}\n"
         f"{updated['tx_date']}\n"
         f"{updated['description']}"
     ))
@@ -700,7 +853,12 @@ HELP_RECORD = (
     "明細 → 查看最近 10 筆\n"
     "修改#[id] 內容 → 修改記錄\n"
     "刪 [id] → 刪除記錄\n"
-    "刪除全部/今天/本月 → 批次刪除"
+    "刪除全部/今天/本月 → 批次刪除\n\n"
+    "帳套管理：\n"
+    "新增帳套 [名稱] [幣別] → 建立帳套\n"
+    "切換帳套 [名稱] → 切換帳套\n"
+    "帳套列表 → 查看所有帳套\n"
+    "刪除帳套 [名稱] → 刪除帳套"
 )
 
 HELP_CHAT = (
@@ -765,6 +923,11 @@ def handle_message(event):
             f"{HELP_RECORD}\n\n"
             f"── 碎碎念（#chat）{mark.get('chat', '')} ──\n"
             f"{HELP_CHAT}\n\n"
+            "── 帳套管理 ──\n"
+            "新增帳套 [名稱] [幣別] → 建立帳套\n"
+            "切換帳套 [名稱] → 切換帳套\n"
+            "帳套列表 → 查看所有帳套\n"
+            "刪除帳套 [名稱] → 刪除帳套\n\n"
             "── 每日推送 ──\n"
             "設定推送 HH:MM → 開啟每日總結\n"
             "取消推送 → 關閉推送\n"
@@ -794,6 +957,65 @@ def handle_message(event):
             reply(event, f"目前推送時間：{pt.strftime('%H:%M')}\n\n輸入「取消推送」可關閉")
         else:
             reply(event, "目前未設定推送\n\n輸入「設定推送 21:00」開啟每日總結")
+        return
+
+    # ── Account set commands (global) ──
+    aset_match = re.match(r"新增帳套\s+(\S+)\s*(\S*)", text)
+    if aset_match:
+        name = aset_match.group(1)
+        currency = aset_match.group(2).upper() if aset_match.group(2) else "TWD"
+        set_id = create_account_set(user_id, name, currency)
+        symbol = CURRENCY_SYMBOL.get(currency, currency)
+        reply(event, (
+            f"已建立帳套「{name}」\n"
+            f"幣別：{currency}（{symbol}）\n"
+            f"已自動切換至此帳套\n\n"
+            f"輸入「帳套列表」查看所有帳套"
+        ))
+        return
+    switch_match = re.match(r"切換帳套\s+(\S+)", text)
+    if switch_match:
+        name = switch_match.group(1)
+        result = switch_account_set(user_id, name)
+        if result:
+            symbol = CURRENCY_SYMBOL.get(result["currency"], result["currency"])
+            reply(event, f"已切換至帳套「{name}」（{result['currency']}｜{symbol}）")
+        else:
+            reply(event, f"找不到帳套「{name}」\n輸入「帳套列表」查看所有帳套")
+        return
+    del_aset_match = re.match(r"刪除帳套\s+(\S+)", text)
+    if del_aset_match:
+        name = del_aset_match.group(1)
+        if delete_account_set(user_id, name):
+            reply(event, f"已刪除帳套「{name}」及其所有記錄")
+        else:
+            reply(event, f"找不到帳套「{name}」")
+        return
+    if text in ("帳套列表", "帳套", "查看帳套"):
+        sets = list_account_sets(user_id)
+        aset = get_active_account_set(user_id)
+        active_id = aset["id"] if aset else None
+        if not sets:
+            reply(event, (
+                "目前沒有帳套，記帳使用預設幣別（TWD）\n\n"
+                "輸入「新增帳套 名稱 幣別」建立\n"
+                "例如：新增帳套 歐洲旅遊 EUR"
+            ))
+        else:
+            lines = ["帳套列表\n"]
+            for s in sets:
+                symbol = CURRENCY_SYMBOL.get(s["currency"], s["currency"])
+                mark = " ← 使用中" if s["id"] == active_id else ""
+                lines.append(f"  [{s['id']}] {s['name']}（{s['currency']}｜{symbol}）{mark}")
+            lines.append(f"\n切換：切換帳套 [名稱]")
+            lines.append("新增：新增帳套 [名稱] [幣別]")
+            reply(event, "\n".join(lines))
+        return
+
+    # ── Bot name "小白" → route to chat ──
+    if text.startswith("小白") and mode != "chat":
+        response = agent_chat(text, [])
+        reply(event, response)
         return
 
     # ── Exact keyword shortcuts ──

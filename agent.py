@@ -80,13 +80,41 @@ def agent_parse_transaction(user_text: str) -> dict | None:
         return None
 
 
+ACCOUNT_SET_PROMPT = """你是帳套管理助理。根據用戶輸入回傳 JSON。
+action 值域：create / switch / delete / unknown
+- create: {{"action":"create","name":"帳套名稱","currency":"幣別代碼"}}
+- switch: {{"action":"switch","name":"帳套名稱"}}
+- delete: {{"action":"delete","name":"帳套名稱"}}
+- unknown: 無法判斷時回傳
+currency 常見：TWD/USD/EUR/JPY/GBP/KRW/CNY/HKD/THB/SGD/AUD/CAD
+若用戶未指定幣別，預設TWD
+只回傳JSON。"""
+
+
+def agent_parse_account_set(user_text: str) -> dict | None:
+    resp = client.chat.completions.create(
+        model=MODEL,
+        max_completion_tokens=200,
+        messages=[
+            {"role": "system", "content": ACCOUNT_SET_PROMPT},
+            {"role": "user", "content": user_text}
+        ],
+        temperature=0.3
+    )
+    try:
+        return _parse_json_response(resp.choices[0].message.content)
+    except (json.JSONDecodeError, IndexError, AttributeError):
+        return None
+
+
 # ── Chat mode: free conversation ──
 
 def agent_chat(user_text: str, history: list) -> str:
     today = _today()
     messages = [
         {"role": "system", "content": (
-            f"你是一個友善的智慧助理。今天日期是 {today}。"
+            f"你是「小白」，一個友善的智慧助理。今天日期是 {today}。"
+            "當用戶叫你「小白」時，自然地回應。"
             "你可以回答各種問題，包括生活、料理、旅遊、知識等。"
             "回答請使用繁體中文，保持簡潔友善，限制1000字以內。"
         )}

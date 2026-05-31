@@ -43,13 +43,28 @@ def init_db():
         );
     """)
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS account_sets (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            currency TEXT DEFAULT 'TWD',
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    """)
+    cur.execute("""
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_date DATE DEFAULT CURRENT_DATE;
+    """)
+    cur.execute("""
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_set_id INTEGER DEFAULT NULL;
     """)
     cur.execute("""
         ALTER TABLE todos ADD COLUMN IF NOT EXISTS due_time TIME DEFAULT NULL;
     """)
     cur.execute("""
         ALTER TABLE user_state ADD COLUMN IF NOT EXISTS push_time TIME DEFAULT NULL;
+    """)
+    cur.execute("""
+        ALTER TABLE user_state ADD COLUMN IF NOT EXISTS active_account_set_id INTEGER DEFAULT NULL;
     """)
     conn.commit()
     cur.close()
